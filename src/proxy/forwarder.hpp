@@ -9,6 +9,7 @@
 #include "config/config.hpp"
 #include "server/connection.hpp"
 #include "proxy/connection_pool.hpp"
+#include "proxy/stream_pipe.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/core.hpp>
@@ -36,6 +37,7 @@ struct ForwarderConfig {
     bool add_forwarded_headers{true};             // Add X-Forwarded-For, X-Real-IP
     bool generate_request_id{true};               // Generate X-Request-ID if not present
     std::size_t max_retries{0};                   // Retry count on connection failure (0 = no retry)
+    StreamPipeConfig stream_config{};              // Configuration for streaming responses
 };
 
 /**
@@ -50,6 +52,10 @@ struct ForwardResult {
     // Backend that handled the request
     std::string backend_host;
     std::uint16_t backend_port{0};
+
+    // Streaming-specific fields
+    bool is_streaming{false};               // True if response was streamed
+    StreamResult stream_result{};           // Details of streaming (if is_streaming)
 };
 
 /**
@@ -91,6 +97,28 @@ public:
     ForwardResult forward(const server::HttpRequest& request,
                          const config::BackendConfig& backend,
                          const std::string& client_ip = "");
+
+    /**
+     * Forward a request with streaming response support
+     * If the backend returns a streaming response (SSE), this streams directly to the client.
+     * Non-streaming responses are handled normally.
+     *
+     * @param request The HTTP request to forward
+     * @param backend The backend to forward to
+     * @param client_stream The client's TCP stream for direct streaming
+     * @param client_ip The client's IP address (for X-Forwarded-For)
+     * @return ForwardResult with response or streaming details
+     */
+    ForwardResult forward_with_streaming(const server::HttpRequest& request,
+                                         const config::BackendConfig& backend,
+                                         beast::tcp_stream& client_stream,
+                                         const std::string& client_ip = "");
+
+    /**
+     * Check if a request should be handled with streaming
+     * (Based on request headers, e.g., Accept: text/event-stream)
+     */
+    static bool is_streaming_request(const server::HttpRequest& request);
 
     /**
      * Get the configuration

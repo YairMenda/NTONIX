@@ -11,9 +11,11 @@
 
 namespace ntonix::server {
 
-Connection::Connection(tcp::socket socket, RequestHandler handler)
+Connection::Connection(tcp::socket socket, RequestHandler handler,
+                       StreamingRequestHandler streaming_handler)
     : stream_(std::move(socket))
     , handler_(std::move(handler))
+    , streaming_handler_(std::move(streaming_handler))
 {
     // Capture client endpoint before moving socket
     beast::error_code ec;
@@ -119,14 +121,33 @@ void Connection::on_read(beast::error_code ec, std::size_t bytes_transferred) {
     // Parse the request and invoke handler
     try {
         HttpRequest parsed_req = parse_request(request_);
-        HttpResponse resp = handler_(parsed_req);
-        response_ = build_response(resp);
+
+        // Try streaming handler first if available
+        streaming_handled_ = false;
+        if (streaming_handler_) {
+            streaming_handled_ = streaming_handler_(parsed_req, stream_);
+        }
+
+        // If streaming handler didn't handle it, use normal handler
+        if (!streaming_handled_) {
+            HttpResponse resp = handler_(parsed_req);
+            response_ = build_response(resp);
+        }
     } catch (const std::exception& e) {
         spdlog::error("Connection: Handler exception - {}", e.what());
-        response_ = build_error_response(
-            http::status::internal_server_error,
-            "Internal server error"
-        );
+        if (!streaming_handled_) {
+            response_ = build_error_response(
+                http::status::internal_server_error,
+                "Internal server error"
+            );
+        }
+    }
+
+    // If streaming was handled, response was already sent
+    if (streaming_handled_) {
+        // For streaming, we don't keep the connection alive after
+        close();
+        return;
     }
 
     // Send the response
@@ -241,8 +262,10 @@ http::response<http::string_body> Connection::build_error_response(
     return response;
 }
 
-void handle_connection(tcp::socket socket, RequestHandler handler) {
-    std::make_shared<Connection>(std::move(socket), std::move(handler))->start();
+void handle_connection(tcp::socket socket, RequestHandler handler,
+                       StreamingRequestHandler streaming_handler) {
+    std::make_shared<Connection>(std::move(socket), std::move(handler),
+                                  std::move(streaming_handler))->start();
 }
 
 } // namespace ntonix::server

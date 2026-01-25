@@ -88,6 +88,7 @@ set(NTONIX_SOURCES
     src/balancer/load_balancer.cpp
     src/proxy/connection_pool.cpp
     src/proxy/forwarder.cpp
+    src/proxy/stream_pipe.cpp
 )
 
 # Main executable

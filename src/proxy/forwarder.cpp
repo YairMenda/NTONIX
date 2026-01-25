@@ -292,4 +292,192 @@ server::HttpResponse Forwarder::parse_backend_response(
     return result;
 }
 
+bool Forwarder::is_streaming_request(const server::HttpRequest& request) {
+    // Check if the request body contains "stream": true (OpenAI API format)
+    // This is a simple check; a more robust implementation would parse the JSON
+    if (request.body.find("\"stream\"") != std::string::npos) {
+        // Check for "stream": true or "stream":true
+        if (request.body.find("\"stream\": true") != std::string::npos ||
+            request.body.find("\"stream\":true") != std::string::npos) {
+            return true;
+        }
+    }
+
+    // Also check Accept header for text/event-stream
+    const auto& raw = request.raw_request;
+    if (auto it = raw.find(http::field::accept); it != raw.end()) {
+        std::string accept{it->value()};
+        if (accept.find("text/event-stream") != std::string::npos) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+ForwardResult Forwarder::forward_with_streaming(const server::HttpRequest& request,
+                                                const config::BackendConfig& backend,
+                                                beast::tcp_stream& client_stream,
+                                                const std::string& client_ip)
+{
+    ForwardResult result;
+    result.backend_host = backend.host;
+    result.backend_port = backend.port;
+
+    auto start_time = std::chrono::steady_clock::now();
+
+    // Check if this should be a streaming request
+    bool expect_streaming = is_streaming_request(request);
+
+    spdlog::debug("Forwarder: Forwarding {} {} to {}:{} (streaming={})",
+                  std::string(http::to_string(request.method)),
+                  request.target, backend.host, backend.port, expect_streaming);
+
+    // Get a connection from the pool
+    auto conn_guard = connection_pool_->get_connection(backend);
+    if (!conn_guard) {
+        result.success = false;
+        result.error_message = "Failed to get connection to backend";
+        result.response.status = http::status::bad_gateway;
+        result.response.content_type = "application/json";
+        result.response.body = R"({"error": "Failed to connect to backend"})";
+
+        auto end_time = std::chrono::steady_clock::now();
+        result.latency = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+
+        spdlog::warn("Forwarder: Failed to get connection to {}:{}", backend.host, backend.port);
+        return result;
+    }
+
+    // Build the request to send to the backend
+    auto backend_request = build_backend_request(request, backend, client_ip);
+
+    try {
+        tcp::socket& socket = (*conn_guard)->socket();
+
+        // Send the request to backend
+        spdlog::debug("Forwarder: Sending request to backend");
+        http::write(socket, backend_request);
+
+        // Read just the response header first to determine if streaming
+        beast::flat_buffer buffer;
+        http::response_parser<http::string_body> parser;
+        parser.body_limit(boost::none);  // No body limit for streaming
+
+        // Read the header
+        http::read_header(socket, buffer, parser);
+
+        auto& response_header = parser.get();
+
+        spdlog::debug("Forwarder: Got response status={}, Content-Type={}",
+                      static_cast<int>(response_header.result()),
+                      response_header.count(http::field::content_type) > 0 ?
+                          std::string(response_header[http::field::content_type]) : "(none)");
+
+        // Check if this is a streaming response
+        if (expect_streaming && StreamPipe::is_streaming_response(response_header.base())) {
+            spdlog::info("Forwarder: Streaming response detected - using zero-copy forwarding");
+
+            // Get any body data already read with the header
+            std::string initial_body;
+            if (parser.is_done()) {
+                // Entire response was in header read
+                initial_body = parser.get().body();
+            } else {
+                // There may be some body data in the buffer
+                auto remaining = buffer.data();
+                initial_body = std::string(
+                    static_cast<const char*>(remaining.data()),
+                    remaining.size());
+                buffer.consume(remaining.size());
+            }
+
+            // Create stream pipe and forward
+            auto stream_pipe = make_stream_pipe(io_context_, config_.stream_config);
+            result.stream_result = stream_pipe->forward_stream(
+                socket, client_stream, response_header.base(), initial_body);
+
+            result.is_streaming = true;
+            result.success = result.stream_result.success;
+
+            if (!result.success) {
+                result.error_message = result.stream_result.error_message;
+            }
+
+            // After streaming, connection should not be reused
+            conn_guard->mark_failed();
+
+            auto end_time = std::chrono::steady_clock::now();
+            result.latency = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+
+            spdlog::info("Forwarder: Streaming complete - {} bytes forwarded in {}ms",
+                        result.stream_result.bytes_forwarded, result.latency.count());
+
+        } else {
+            // Non-streaming response - read the full body
+            spdlog::debug("Forwarder: Non-streaming response - reading full body");
+
+            // Continue reading the rest of the response
+            http::read(socket, buffer, parser);
+
+            // Parse the response
+            result.success = true;
+            result.response = parse_backend_response(parser.get());
+            result.is_streaming = false;
+
+            auto end_time = std::chrono::steady_clock::now();
+            result.latency = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+
+            spdlog::debug("Forwarder: Received {} response from {}:{} in {}ms",
+                          static_cast<int>(result.response.status),
+                          backend.host, backend.port, result.latency.count());
+        }
+
+    } catch (const beast::system_error& e) {
+        result.success = false;
+        conn_guard->mark_failed();
+
+        auto end_time = std::chrono::steady_clock::now();
+        result.latency = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+
+        if (e.code() == beast::error::timeout) {
+            result.error_message = "Backend request timed out";
+            result.response.status = http::status::gateway_timeout;
+            spdlog::warn("Forwarder: Timeout communicating with {}:{}", backend.host, backend.port);
+        } else if (e.code() == asio::error::connection_refused ||
+                   e.code() == asio::error::connection_reset ||
+                   e.code() == asio::error::broken_pipe) {
+            result.error_message = "Backend connection failed: " + e.code().message();
+            result.response.status = http::status::bad_gateway;
+            spdlog::warn("Forwarder: Connection error with {}:{}: {}",
+                        backend.host, backend.port, e.code().message());
+        } else {
+            result.error_message = "Backend communication error: " + e.code().message();
+            result.response.status = http::status::bad_gateway;
+            spdlog::warn("Forwarder: Error communicating with {}:{}: {}",
+                        backend.host, backend.port, e.code().message());
+        }
+
+        result.response.content_type = "application/json";
+        result.response.body = R"({"error": ")" + result.error_message + R"("})";
+
+    } catch (const std::exception& e) {
+        result.success = false;
+        conn_guard->mark_failed();
+
+        auto end_time = std::chrono::steady_clock::now();
+        result.latency = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+
+        result.error_message = std::string("Unexpected error: ") + e.what();
+        result.response.status = http::status::internal_server_error;
+        result.response.content_type = "application/json";
+        result.response.body = R"({"error": "Internal proxy error"})";
+
+        spdlog::error("Forwarder: Unexpected error forwarding to {}:{}: {}",
+                     backend.host, backend.port, e.what());
+    }
+
+    return result;
+}
+
 } // namespace ntonix::proxy

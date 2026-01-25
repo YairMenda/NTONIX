@@ -134,7 +134,90 @@ int main(int argc, char* argv[]) {
             connection_pool->set_backends(backends);
         });
 
-        // HTTP request handler using Boost.Beast
+        // Streaming request handler - handles SSE streaming responses
+        auto streaming_handler = [load_balancer, forwarder](
+            const ntonix::server::HttpRequest& req,
+            boost::beast::tcp_stream& client_stream) -> bool {
+
+            using namespace ntonix::server;
+            namespace http = boost::beast::http;
+
+            // Only handle streaming for POST /v1/chat/completions with stream=true
+            if (req.target != "/v1/chat/completions" || req.method != http::verb::post) {
+                return false;  // Let normal handler process this
+            }
+
+            // Check if this is a streaming request
+            if (!ntonix::proxy::Forwarder::is_streaming_request(req)) {
+                return false;  // Not a streaming request, use normal handler
+            }
+
+            spdlog::info("Streaming request: {} {} Client={}",
+                        std::string(http::to_string(req.method)),
+                        req.target,
+                        req.client_ip.empty() ? "(unknown)" : req.client_ip);
+
+            // Check Content-Type for JSON
+            if (req.content_type.find("application/json") == std::string::npos) {
+                // Return error via stream (we need to write response ourselves)
+                http::response<http::string_body> error_response{http::status::unsupported_media_type, 11};
+                error_response.set(http::field::server, "NTONIX/0.1.0");
+                error_response.set(http::field::content_type, "application/json");
+                error_response.body() = R"({"error": "Content-Type must be application/json"})";
+                error_response.prepare_payload();
+                boost::beast::error_code ec;
+                http::write(client_stream, error_response, ec);
+                return true;  // We handled it
+            }
+
+            // Select backend using load balancer
+            auto backend_selection = load_balancer->select_backend();
+            if (!backend_selection) {
+                spdlog::warn("No healthy backends available for streaming request");
+                http::response<http::string_body> error_response{http::status::service_unavailable, 11};
+                error_response.set(http::field::server, "NTONIX/0.1.0");
+                error_response.set(http::field::content_type, "application/json");
+                error_response.body() = R"({"error": "No healthy backends available"})";
+                error_response.prepare_payload();
+                boost::beast::error_code ec;
+                http::write(client_stream, error_response, ec);
+                return true;
+            }
+
+            const auto& backend = backend_selection->backend;
+            spdlog::info("Load balancer selected backend {}:{} for streaming (index={})",
+                        backend.host, backend.port, backend_selection->index);
+
+            // Forward with streaming support
+            auto result = forwarder->forward_with_streaming(req, backend, client_stream, req.client_ip);
+
+            if (result.is_streaming) {
+                spdlog::info("Streaming complete: {} bytes forwarded from {}:{} in {}ms",
+                            result.stream_result.bytes_forwarded,
+                            result.backend_host, result.backend_port,
+                            result.latency.count());
+            } else {
+                // Backend returned non-streaming response, send it to client
+                http::response<http::string_body> response{result.response.status, 11};
+                response.set(http::field::server, "NTONIX/0.1.0");
+                response.set(http::field::content_type, result.response.content_type);
+                for (const auto& [name, value] : result.response.headers) {
+                    response.set(name, value);
+                }
+                response.body() = result.response.body;
+                response.prepare_payload();
+                boost::beast::error_code ec;
+                http::write(client_stream, response, ec);
+            }
+
+            if (!result.success) {
+                spdlog::warn("Streaming forward failed: {}", result.error_message);
+            }
+
+            return true;  // We handled the request
+        };
+
+        // HTTP request handler using Boost.Beast (non-streaming requests)
         auto request_handler = [load_balancer, forwarder](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
             using namespace ntonix::server;
             namespace http = boost::beast::http;
@@ -155,7 +238,8 @@ int main(int argc, char* argv[]) {
                 };
             }
 
-            // Handle OpenAI-compatible chat completions endpoint
+            // Handle OpenAI-compatible chat completions endpoint (non-streaming only)
+            // Note: Streaming requests are handled by streaming_handler above
             if (req.target == "/v1/chat/completions" && req.method == http::verb::post) {
                 // Check Content-Type for JSON
                 if (req.content_type.find("application/json") == std::string::npos) {
@@ -184,7 +268,7 @@ int main(int argc, char* argv[]) {
                 spdlog::info("Load balancer selected backend {}:{} (index={})",
                             backend.host, backend.port, backend_selection->index);
 
-                // Forward the request to the selected backend
+                // Forward the request to the selected backend (non-streaming)
                 auto result = forwarder->forward(req, backend, req.client_ip);
 
                 spdlog::info("Backend response: {} from {}:{} in {}ms",
@@ -227,8 +311,8 @@ int main(int argc, char* argv[]) {
         // Connection handler - wraps each connection with HTTP parsing
         // Reload handler - called on SIGHUP to reload configuration
         server.start(
-            [request_handler](asio::ip::tcp::socket socket) {
-                ntonix::server::handle_connection(std::move(socket), request_handler);
+            [request_handler, streaming_handler](asio::ip::tcp::socket socket) {
+                ntonix::server::handle_connection(std::move(socket), request_handler, streaming_handler);
             },
             [&config_manager]() {
                 config_manager.reload();

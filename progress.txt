@@ -23,3 +23,37 @@ Started: 01/25/2026 20:19:00
   - Error codes: beast::error::timeout, asio::error::connection_refused/reset/broken_pipe
   - Backend responses filtered of hop-by-hop headers before returning to client
 ---
+
+## Iteration [2] - US-009: Zero-Copy Stream Forwarding
+- What was implemented:
+  - StreamPipe class for zero-copy forwarding of SSE streams from backends to clients
+  - StreamPipeConfig struct with buffer_size, read_timeout, done marker detection, chunked encoding options
+  - StreamResult struct tracking bytes forwarded, duration, client disconnect, backend closed, and DONE marker detection
+  - Zero-copy forwarding using asio::const_buffer - data flows directly from read buffer to write
+  - Chunked transfer encoding support for forwarding to clients (HTTP/1.1 compatible)
+  - SSE [DONE] marker detection to terminate streaming (OpenAI API convention)
+  - Client disconnect detection via non-blocking peek to stop backend streaming early
+  - Integration with Forwarder via forward_with_streaming() method
+  - is_streaming_request() checks for "stream": true in JSON body or Accept: text/event-stream header
+  - Connection class updated with StreamingRequestHandler for direct stream access
+  - Main.cpp updated with streaming_handler that handles streaming requests separately
+
+- Files changed:
+  - src/proxy/stream_pipe.hpp - NEW: StreamPipe class, StreamPipeConfig, StreamResult structs
+  - src/proxy/stream_pipe.cpp - NEW: Full implementation of streaming logic
+  - src/proxy/forwarder.hpp - Added forward_with_streaming(), is_streaming_request(), stream_config
+  - src/proxy/forwarder.cpp - Implemented streaming support, header-only read, then stream or full body
+  - src/server/connection.hpp - Added StreamingRequestHandler type, streaming support to Connection class
+  - src/server/connection.cpp - Streaming handler invoked before normal handler
+  - src/main.cpp - Added streaming_handler lambda for /v1/chat/completions with stream=true
+  - CMakeLists.txt - Added stream_pipe.cpp to build
+
+- Learnings for future iterations:
+  - Beast's response_parser supports header-only read with http::read_header() to detect streaming before body
+  - Use parser.body_limit(boost::none) for streaming to disable body size limits
+  - buffer.data() gives access to any buffered body data after header read
+  - Chunked transfer encoding format: hex-size\r\ndata\r\n, terminated by 0\r\n\r\n
+  - Client disconnect detected via non-blocking peek with tcp::socket::message_peek
+  - OpenAI streaming: Content-Type text/event-stream, ends with "data: [DONE]"
+  - After streaming, connection should not be returned to pool (mark_failed)
+---

@@ -185,15 +185,15 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a proxy, I need to forward LLM response streams to clients without buffering so that TTFT is minimized.
 
 **Acceptance Criteria:**
-- [ ] Forward SSE (Server-Sent Events) chunks as they arrive from backend
-- [ ] Use asio::const_buffer for zero-copy forwarding
-- [ ] Never buffer entire response in memory
-- [ ] Handle chunked transfer encoding from backend
-- [ ] Maintain streaming until backend closes connection or sends [DONE]
-- [ ] Client disconnect detection to stop backend streaming early
+- [x] Forward SSE (Server-Sent Events) chunks as they arrive from backend
+- [x] Use asio::const_buffer for zero-copy forwarding
+- [x] Never buffer entire response in memory
+- [x] Handle chunked transfer encoding from backend
+- [x] Maintain streaming until backend closes connection or sends [DONE]
+- [x] Client disconnect detection to stop backend streaming early
 
 - **Priority:** 1
-- **Status:** false
+- **Status:** true
 - **Notes:** Key differentiator. Critical for interview discussions on memory efficiency.
 
 ---

@@ -65,6 +65,14 @@ struct HttpResponse {
 using RequestHandler = std::function<HttpResponse(const HttpRequest&)>;
 
 /**
+ * Streaming request handler callback type
+ * Takes the request and the client's TCP stream for direct streaming.
+ * Returns true if streaming was handled (no normal response needed),
+ * false if a normal HttpResponse should be sent.
+ */
+using StreamingRequestHandler = std::function<bool(const HttpRequest&, beast::tcp_stream&)>;
+
+/**
  * Connection class - manages a single HTTP/1.1 client connection
  *
  * Uses Boost.Beast for HTTP parsing and supports:
@@ -79,8 +87,10 @@ public:
      * Create a new connection
      * @param socket The accepted TCP socket
      * @param handler The request handler callback
+     * @param streaming_handler Optional streaming request handler for SSE/streaming responses
      */
-    explicit Connection(tcp::socket socket, RequestHandler handler);
+    explicit Connection(tcp::socket socket, RequestHandler handler,
+                        StreamingRequestHandler streaming_handler = nullptr);
 
     ~Connection() = default;
 
@@ -115,7 +125,9 @@ private:
     http::request<http::string_body> request_;
     http::response<http::string_body> response_;
     RequestHandler handler_;
+    StreamingRequestHandler streaming_handler_;
     bool keep_alive_{false};
+    bool streaming_handled_{false};  // True if streaming handler took over
 
     // Client connection info (captured at connection time)
     std::string client_ip_;
@@ -126,7 +138,8 @@ private:
  * Create and start a connection
  * Helper function for use with Server::start()
  */
-void handle_connection(tcp::socket socket, RequestHandler handler);
+void handle_connection(tcp::socket socket, RequestHandler handler,
+                       StreamingRequestHandler streaming_handler = nullptr);
 
 } // namespace ntonix::server
 
