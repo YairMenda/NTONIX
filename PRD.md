@@ -152,15 +152,15 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a proxy, I need to reuse backend connections so that I avoid TCP handshake overhead for every request.
 
 **Acceptance Criteria:**
-- [ ] Maintain pool of persistent connections per backend
-- [ ] Configurable pool size per backend (default: 10)
-- [ ] Connection reuse with keep-alive
-- [ ] Automatic connection cleanup for idle/stale connections
-- [ ] Create new connection if pool exhausted (up to max limit)
-- [ ] Thread-safe connection checkout/checkin
+- [x] Maintain pool of persistent connections per backend
+- [x] Configurable pool size per backend (default: 10)
+- [x] Connection reuse with keep-alive
+- [x] Automatic connection cleanup for idle/stale connections
+- [x] Create new connection if pool exhausted (up to max limit)
+- [x] Thread-safe connection checkout/checkin
 
 - **Priority:** 3
-- **Status:** false
+- **Status:** true
 - **Notes:** Significant performance optimization. Use RAII for connection lifecycle.
 
 ---

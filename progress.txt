@@ -74,3 +74,32 @@ Started: 01/25/2026 14:00:29
   - Load balancer integrated with HealthChecker via constructor parameter - checks is_healthy() during selection
   - Config reload updates both HealthChecker and LoadBalancer with new backend list
 ---
+
+## Iteration 4 - US-007: Backend Connection Pool
+- **What was implemented**:
+  - Created ConnectionPoolManager class to manage pools for all backends
+  - Created BackendPool class for per-backend connection pooling with LIFO reuse
+  - PooledConnection class wraps TCP socket with usage tracking and idle time
+  - ConnectionGuard RAII wrapper for automatic connection return on scope exit
+  - Configurable pool size (default 10), idle timeout (60s), cleanup interval (30s)
+  - TCP keep-alive enabled by default, Nagle's algorithm disabled for lower latency
+  - Automatic cleanup timer for removing idle/stale connections
+  - Thread-safe checkout/checkin with std::mutex protection
+  - Pool statistics (available, in_use, total) exposed via get_pool_stats()
+  - Integration with config reload to add/remove backend pools dynamically
+
+- **Files changed**:
+  - src/proxy/connection_pool.hpp: New file - ConnectionPoolManager, BackendPool, PooledConnection, ConnectionGuard
+  - src/proxy/connection_pool.cpp: New file - Full implementation with async cleanup timer
+  - src/main.cpp: Integrated ConnectionPoolManager, added to config reload, start/stop lifecycle
+  - CMakeLists.txt: Added connection_pool.cpp to NTONIX_SOURCES
+
+- **Learnings for future iterations**:
+  - ConnectionPoolManager uses enable_shared_from_this for safe timer callback capture
+  - LIFO (stack-based) reuse keeps recently-used connections warm for better cache locality
+  - ConnectionGuard provides RAII semantics - connection returned even if exception occurs
+  - mark_failed() on ConnectionGuard prevents broken connections from returning to pool
+  - Pool creates new connections synchronously when needed (up to max limit)
+  - Backend key format is "host:port" for consistent pool lookup
+  - Config reload preserves existing pools when backends unchanged
+---

@@ -9,6 +9,7 @@
 #include "server/connection.hpp"
 #include "balancer/health_checker.hpp"
 #include "balancer/load_balancer.hpp"
+#include "proxy/connection_pool.hpp"
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
@@ -95,19 +96,33 @@ int main(int argc, char* argv[]) {
         load_balancer->set_backends(config.backends);
         spdlog::info("Load balancer configured with {} backends", config.backends.size());
 
+        // Create connection pool manager for backend connections
+        ntonix::proxy::ConnectionPoolConfig pool_config;
+        pool_config.pool_size_per_backend = 10;    // Max 10 connections per backend
+        pool_config.idle_timeout = std::chrono::seconds(60);
+        pool_config.cleanup_interval = std::chrono::seconds(30);
+        pool_config.enable_keep_alive = true;
+
+        auto connection_pool = std::make_shared<ntonix::proxy::ConnectionPoolManager>(
+            server.get_io_context(), pool_config);
+        connection_pool->set_backends(config.backends);
+        spdlog::info("Connection pool manager configured (pool_size={} per backend)",
+                    pool_config.pool_size_per_backend);
+
         // Register SIGHUP handler for config reload (Unix only, handled in server via signal_set)
-        config_manager.on_reload([health_checker, load_balancer](const std::vector<ntonix::config::BackendConfig>& backends) {
+        config_manager.on_reload([health_checker, load_balancer, connection_pool](const std::vector<ntonix::config::BackendConfig>& backends) {
             spdlog::info("Backend configuration reloaded with {} backends", backends.size());
             for (const auto& backend : backends) {
                 spdlog::info("  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
             }
-            // Update health checker and load balancer with new backend list
+            // Update health checker, load balancer, and connection pool with new backend list
             health_checker->set_backends(backends);
             load_balancer->set_backends(backends);
+            connection_pool->set_backends(backends);
         });
 
         // HTTP request handler using Boost.Beast
-        auto request_handler = [load_balancer](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
+        auto request_handler = [load_balancer, connection_pool](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
             using namespace ntonix::server;
             namespace http = boost::beast::http;
 
@@ -155,8 +170,18 @@ int main(int argc, char* argv[]) {
                 spdlog::info("Load balancer selected backend {}:{} (index={})",
                             backend.host, backend.port, backend_selection->index);
 
+                // Get a pooled connection to the backend
+                auto pool_stats = connection_pool->get_pool_stats(backend);
+                std::string pool_info = pool_stats
+                    ? "available=" + std::to_string(pool_stats->available) +
+                      ", in_use=" + std::to_string(pool_stats->in_use)
+                    : "no pool";
+                spdlog::debug("Connection pool for {}:{}: {}",
+                             backend.host, backend.port, pool_info);
+
                 // For now, return a mock response indicating which backend was selected
-                // Real implementation will forward to selected LLM backend
+                // Real implementation will use connection_pool->get_connection(backend)
+                // to get a pooled connection and forward the request
                 std::string response_body = R"({
   "id": "chatcmpl-mock",
   "object": "chat.completion",
@@ -177,7 +202,8 @@ int main(int argc, char* argv[]) {
   },
   "_ntonix": {
     "backend": ")" + backend.host + ":" + std::to_string(backend.port) + R"(",
-    "backend_index": )" + std::to_string(backend_selection->index) + R"(
+    "backend_index": )" + std::to_string(backend_selection->index) + R"(,
+    "pool_stats": ")" + pool_info + R"("
   }
 })";
                 return HttpResponse{
@@ -223,10 +249,12 @@ int main(int argc, char* argv[]) {
             }
         );
 
-        // Start health checker after server starts (uses server's io_context)
+        // Start health checker and connection pool after server starts (uses server's io_context)
         if (!config.backends.empty()) {
             health_checker->start();
             spdlog::info("Health checker started for {} backends", config.backends.size());
+            connection_pool->start_cleanup();
+            spdlog::info("Connection pool cleanup timer started");
         }
 
         spdlog::info("Server started successfully");
@@ -235,8 +263,9 @@ int main(int argc, char* argv[]) {
         // Wait for shutdown (blocks until signal received)
         server.wait();
 
-        // Stop health checker
+        // Stop health checker and connection pool
         health_checker->stop();
+        connection_pool->stop_cleanup();
 
         spdlog::info("Server stopped gracefully");
         return 0;

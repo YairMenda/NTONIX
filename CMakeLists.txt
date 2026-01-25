@@ -86,6 +86,7 @@ set(NTONIX_SOURCES
     src/config/config.cpp
     src/balancer/health_checker.cpp
     src/balancer/load_balancer.cpp
+    src/proxy/connection_pool.cpp
 )
 
 # Main executable
