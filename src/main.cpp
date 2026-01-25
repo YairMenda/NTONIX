@@ -5,6 +5,7 @@
  */
 
 #include "server/server.hpp"
+#include "server/connection.hpp"
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
@@ -14,6 +15,10 @@
 namespace asio = boost::asio;
 
 int main(int argc, char* argv[]) {
+    // Suppress unused parameter warnings
+    (void)argc;
+    (void)argv;
+
     // Set log level (DEBUG for development)
     spdlog::set_level(spdlog::level::debug);
 
@@ -33,32 +38,95 @@ int main(int argc, char* argv[]) {
         // Create and start server
         ntonix::server::Server server(config);
 
-        // Simple echo handler for testing - logs connection and echoes back
-        server.start([](asio::ip::tcp::socket socket) {
-            // For now, just log that we got a connection
-            // Full HTTP handling will come in US-003
-            boost::system::error_code ec;
-            auto remote = socket.remote_endpoint(ec);
-            if (!ec) {
-                spdlog::debug("Handler: Processing connection from {}:{}",
-                             remote.address().to_string(), remote.port());
+        // HTTP request handler using Boost.Beast
+        auto request_handler = [](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
+            using namespace ntonix::server;
+            namespace http = boost::beast::http;
+
+            spdlog::info("Request: {} {} Host={} Content-Type={}",
+                        std::string(http::to_string(req.method)),
+                        req.target,
+                        req.host.empty() ? "(none)" : req.host,
+                        req.content_type.empty() ? "(none)" : req.content_type);
+
+            // Handle health check endpoint
+            if (req.target == "/health" && req.method == http::verb::get) {
+                return HttpResponse{
+                    .status = http::status::ok,
+                    .content_type = "application/json",
+                    .body = R"({"status": "healthy"})"
+                };
             }
 
-            // Simple test response - write something back to verify socket works
-            const std::string response =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: text/plain\r\n"
-                "Content-Length: 35\r\n"
-                "Connection: close\r\n"
-                "\r\n"
-                "NTONIX Gateway - Connection OK!\r\n";
+            // Handle OpenAI-compatible chat completions endpoint
+            if (req.target == "/v1/chat/completions" && req.method == http::verb::post) {
+                // Check Content-Type for JSON
+                if (req.content_type.find("application/json") == std::string::npos) {
+                    return HttpResponse{
+                        .status = http::status::unsupported_media_type,
+                        .content_type = "application/json",
+                        .body = R"({"error": "Content-Type must be application/json"})"
+                    };
+                }
 
-            asio::write(socket, asio::buffer(response), ec);
-            if (ec) {
-                spdlog::debug("Handler: Write error: {}", ec.message());
+                // Log the request body (for development)
+                spdlog::debug("Request body: {}", req.body);
+
+                // For now, return a mock response
+                // Real implementation will forward to LLM backend
+                return HttpResponse{
+                    .status = http::status::ok,
+                    .content_type = "application/json",
+                    .body = R"({
+  "id": "chatcmpl-mock",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "mock-model",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "This is a mock response from NTONIX gateway."
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 20,
+    "total_tokens": 30
+  }
+})"
+                };
             }
 
-            socket.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+            // Handle root path - gateway info
+            if (req.target == "/" && req.method == http::verb::get) {
+                return HttpResponse{
+                    .status = http::status::ok,
+                    .content_type = "application/json",
+                    .body = R"({
+  "name": "NTONIX",
+  "version": "0.1.0",
+  "description": "High-Performance AI Inference Gateway",
+  "endpoints": {
+    "health": "/health",
+    "chat_completions": "/v1/chat/completions"
+  }
+})"
+                };
+            }
+
+            // 404 for unknown endpoints
+            return HttpResponse{
+                .status = http::status::not_found,
+                .content_type = "application/json",
+                .body = R"({"error": "Not found"})"
+            };
+        };
+
+        // Connection handler - wraps each connection with HTTP parsing
+        server.start([request_handler](asio::ip::tcp::socket socket) {
+            ntonix::server::handle_connection(std::move(socket), request_handler);
         });
 
         spdlog::info("Server started successfully");

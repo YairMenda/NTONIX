@@ -82,6 +82,7 @@ endif()
 set(NTONIX_SOURCES
     src/main.cpp
     src/server/server.cpp
+    src/server/connection.cpp
 )
 
 # Main executable

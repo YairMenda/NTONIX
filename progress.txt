@@ -51,3 +51,36 @@
   - Use boost::system::error_code for non-throwing error handling in async callbacks
   - Signal handling works cross-platform with Boost.Asio signal_set
 ---
+
+---
+## Iteration 3 - US-003: HTTP/1.1 Request Parsing
+- What was implemented:
+  - Connection class using Boost.Beast for HTTP/1.1 parsing
+  - HttpRequest struct to hold parsed request data (method, target, headers, body)
+  - HttpResponse struct for building responses
+  - Async read/write with beast::tcp_stream and flat_buffer
+  - Automatic extraction of Host, Content-Type, Authorization, X-Request-ID headers
+  - 400 Bad Request for malformed requests (invalid method, target, version)
+  - Keep-alive connection support
+  - Chunked transfer encoding handled automatically by Beast
+  - OpenAI-compatible /v1/chat/completions endpoint (mock response)
+  - /health endpoint for health checks
+  - Content-Type validation for POST requests
+
+- Files changed:
+  - src/server/connection.hpp (new) - Connection class and HttpRequest/HttpResponse structs
+  - src/server/connection.cpp (new) - Full implementation with async read/write
+  - src/main.cpp (modified) - Updated to use Connection handler with request routing
+  - CMakeLists.txt (modified) - Added connection.cpp to sources
+
+- Learnings for future iterations:
+  - beast::bind_front_handler binds arguments BEFORE the callback's (ec, bytes) params
+  - Don't try to pass extra arguments through bind_front_handler - use member variables or lambdas
+  - beast::flat_buffer is reusable across multiple requests on the same connection
+  - http::async_read handles chunked transfer encoding automatically
+  - Use designated initializers with default values to avoid -Wmissing-field-initializers warnings
+  - request_.keep_alive() returns the connection preference based on HTTP version and headers
+  - response_.prepare_payload() sets Content-Length automatically
+  - beast::tcp_stream provides expires_after() for request timeouts
+  - enable_shared_from_this is required for passing shared_ptr to async callbacks
+---

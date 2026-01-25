@@ -62,14 +62,14 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a proxy, I need to parse incoming HTTP/1.1 requests so that I can understand client intent and route appropriately.
 
 **Acceptance Criteria:**
-- [ ] Parse HTTP method, URI, headers, and body using Boost.Beast
-- [ ] Extract relevant headers (Host, Content-Type, Authorization)
-- [ ] Handle chunked transfer encoding for request bodies
-- [ ] Validate request format and return 400 Bad Request for malformed requests
-- [ ] Support POST requests with JSON body (LLM inference payloads)
+- [x] Parse HTTP method, URI, headers, and body using Boost.Beast
+- [x] Extract relevant headers (Host, Content-Type, Authorization)
+- [x] Handle chunked transfer encoding for request bodies
+- [x] Validate request format and return 400 Bad Request for malformed requests
+- [x] Support POST requests with JSON body (LLM inference payloads)
 
 - **Priority:** 1
-- **Status:** false
+- **Status:** true
 - **Notes:** Focus on POST /v1/chat/completions (OpenAI-compatible endpoint).
 
 ---
