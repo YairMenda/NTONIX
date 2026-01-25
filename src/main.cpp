@@ -10,6 +10,7 @@
 #include "balancer/health_checker.hpp"
 #include "balancer/load_balancer.hpp"
 #include "proxy/connection_pool.hpp"
+#include "proxy/forwarder.hpp"
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
@@ -109,6 +110,18 @@ int main(int argc, char* argv[]) {
         spdlog::info("Connection pool manager configured (pool_size={} per backend)",
                     pool_config.pool_size_per_backend);
 
+        // Create request forwarder for proxying to backends
+        ntonix::proxy::ForwarderConfig forwarder_config;
+        forwarder_config.request_timeout = std::chrono::seconds(60);  // LLM requests can be slow
+        forwarder_config.connect_timeout = std::chrono::seconds(5);
+        forwarder_config.add_forwarded_headers = true;
+        forwarder_config.generate_request_id = true;
+
+        auto forwarder = std::make_shared<ntonix::proxy::Forwarder>(
+            server.get_io_context(), connection_pool, forwarder_config);
+        spdlog::info("Request forwarder configured (timeout={}s)",
+                    forwarder_config.request_timeout.count());
+
         // Register SIGHUP handler for config reload (Unix only, handled in server via signal_set)
         config_manager.on_reload([health_checker, load_balancer, connection_pool](const std::vector<ntonix::config::BackendConfig>& backends) {
             spdlog::info("Backend configuration reloaded with {} backends", backends.size());
@@ -122,15 +135,16 @@ int main(int argc, char* argv[]) {
         });
 
         // HTTP request handler using Boost.Beast
-        auto request_handler = [load_balancer, connection_pool](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
+        auto request_handler = [load_balancer, forwarder](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
             using namespace ntonix::server;
             namespace http = boost::beast::http;
 
-            spdlog::info("Request: {} {} Host={} Content-Type={}",
+            spdlog::info("Request: {} {} Host={} Content-Type={} Client={}",
                         std::string(http::to_string(req.method)),
                         req.target,
                         req.host.empty() ? "(none)" : req.host,
-                        req.content_type.empty() ? "(none)" : req.content_type);
+                        req.content_type.empty() ? "(none)" : req.content_type,
+                        req.client_ip.empty() ? "(unknown)" : req.client_ip);
 
             // Handle health check endpoint
             if (req.target == "/health" && req.method == http::verb::get) {
@@ -170,47 +184,19 @@ int main(int argc, char* argv[]) {
                 spdlog::info("Load balancer selected backend {}:{} (index={})",
                             backend.host, backend.port, backend_selection->index);
 
-                // Get a pooled connection to the backend
-                auto pool_stats = connection_pool->get_pool_stats(backend);
-                std::string pool_info = pool_stats
-                    ? "available=" + std::to_string(pool_stats->available) +
-                      ", in_use=" + std::to_string(pool_stats->in_use)
-                    : "no pool";
-                spdlog::debug("Connection pool for {}:{}: {}",
-                             backend.host, backend.port, pool_info);
+                // Forward the request to the selected backend
+                auto result = forwarder->forward(req, backend, req.client_ip);
 
-                // For now, return a mock response indicating which backend was selected
-                // Real implementation will use connection_pool->get_connection(backend)
-                // to get a pooled connection and forward the request
-                std::string response_body = R"({
-  "id": "chatcmpl-mock",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "model": "mock-model",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant",
-      "content": "Mock response - would be forwarded to )" + backend.host + ":" + std::to_string(backend.port) + R"("
-    },
-    "finish_reason": "stop"
-  }],
-  "usage": {
-    "prompt_tokens": 10,
-    "completion_tokens": 20,
-    "total_tokens": 30
-  },
-  "_ntonix": {
-    "backend": ")" + backend.host + ":" + std::to_string(backend.port) + R"(",
-    "backend_index": )" + std::to_string(backend_selection->index) + R"(,
-    "pool_stats": ")" + pool_info + R"("
-  }
-})";
-                return HttpResponse{
-                    .status = http::status::ok,
-                    .content_type = "application/json",
-                    .body = response_body
-                };
+                spdlog::info("Backend response: {} from {}:{} in {}ms",
+                            static_cast<int>(result.response.status),
+                            result.backend_host, result.backend_port,
+                            result.latency.count());
+
+                if (!result.success) {
+                    spdlog::warn("Forward failed: {}", result.error_message);
+                }
+
+                return result.response;
             }
 
             // Handle root path - gateway info

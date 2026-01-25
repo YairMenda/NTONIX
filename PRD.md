@@ -169,14 +169,14 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a proxy, I need to forward client requests to selected backends so that LLM inference can be performed.
 
 **Acceptance Criteria:**
-- [ ] Forward complete HTTP request to backend
-- [ ] Add/modify headers: X-Forwarded-For, X-Real-IP, X-Request-ID
-- [ ] Handle backend connection errors gracefully (retry or fail fast)
-- [ ] Timeout handling for backend responses (configurable)
-- [ ] Pass through all relevant headers to backend
+- [x] Forward complete HTTP request to backend
+- [x] Add/modify headers: X-Forwarded-For, X-Real-IP, X-Request-ID
+- [x] Handle backend connection errors gracefully (retry or fail fast)
+- [x] Timeout handling for backend responses (configurable)
+- [x] Pass through all relevant headers to backend
 
 - **Priority:** 2
-- **Status:** false
+- **Status:** true
 - **Notes:** Core proxy functionality.
 
 ---

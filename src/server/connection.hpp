@@ -38,6 +38,10 @@ struct HttpRequest {
     // Request body (for POST/PUT)
     std::string body;
 
+    // Client connection info
+    std::string client_ip;
+    std::uint16_t client_port{0};
+
     // Full headers access
     http::request<http::string_body> raw_request;
 };
@@ -112,6 +116,10 @@ private:
     http::response<http::string_body> response_;
     RequestHandler handler_;
     bool keep_alive_{false};
+
+    // Client connection info (captured at connection time)
+    std::string client_ip_;
+    std::uint16_t client_port_{0};
 };
 
 /**

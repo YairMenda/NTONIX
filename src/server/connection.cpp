@@ -15,6 +15,14 @@ Connection::Connection(tcp::socket socket, RequestHandler handler)
     : stream_(std::move(socket))
     , handler_(std::move(handler))
 {
+    // Capture client endpoint before moving socket
+    beast::error_code ec;
+    auto endpoint = stream_.socket().remote_endpoint(ec);
+    if (!ec) {
+        client_ip_ = endpoint.address().to_string();
+        client_port_ = endpoint.port();
+    }
+
     // Set reasonable timeout
     stream_.expires_after(std::chrono::seconds(30));
 }
@@ -180,6 +188,10 @@ HttpRequest Connection::parse_request(const http::request<http::string_body>& re
     parsed.version = req.version();
     parsed.body = req.body();
     parsed.raw_request = req;
+
+    // Client connection info
+    parsed.client_ip = client_ip_;
+    parsed.client_port = client_port_;
 
     // Extract common headers (case-insensitive with Beast)
     if (auto it = req.find(http::field::host); it != req.end()) {

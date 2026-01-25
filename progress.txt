@@ -1,105 +1,25 @@
 ﻿# Ralph Progress Log
-Started: 01/25/2026 14:00:29
+Started: 01/25/2026 20:19:00
 ---
 
-## Iteration 1 - US-004: Configuration System (Complete SIGHUP Hot-Reload)
-- **What was implemented**:
-  - Added SIGHUP signal handling differentiation - SIGHUP now triggers config reload instead of shutdown
-  - Added ReloadHandler callback type to Server class
-  - Updated Server::start() to accept optional reload_handler parameter
-  - Wired up ConfigManager::reload() with Server's SIGHUP handler in main.cpp
-  - Signal handler re-registers itself after SIGHUP to allow multiple reloads
+## Iteration [1] - US-008: Request Forwarding to Backend
+- What was implemented:
+  - Forwarder class that forwards HTTP requests from clients to backend servers
+  - Proxy header injection: X-Forwarded-For (appends client IP), X-Real-IP, X-Request-ID (UUID-like)
+  - Connection pooling integration for efficient backend connections
+  - Error handling with appropriate HTTP status codes (502 Bad Gateway, 504 Gateway Timeout)
+  - Hop-by-hop header filtering (Connection, Keep-Alive, Transfer-Encoding, etc. not forwarded)
+  - Relevant header pass-through: Content-Type, Authorization, Accept, Accept-Encoding, User-Agent
 
-- **Files changed**:
-  - src/server/server.hpp: Added ReloadHandler type, updated start() signature, added reload_handler_ member
-  - src/server/server.cpp: Modified setup_signal_handling() to differentiate SIGHUP from shutdown signals
-  - src/main.cpp: Wired reload_handler to call config_manager.reload()
+- Files changed:
+  - src/proxy/forwarder.hpp - Forwarder class declaration, ForwarderConfig, ForwardResult structs
+  - src/proxy/forwarder.cpp - Full implementation of request forwarding logic
+  - src/main.cpp - Integration with load balancer for /v1/chat/completions endpoint
 
-- **Note**: The configuration system itself (JSON parsing, env vars, CLI args, validation) was already implemented in previous commits. This iteration completed the hot-reload functionality.
-
-- **Learnings for future iterations**:
-  - Build and test with Docker using Dockerfile.build (cmake not installed locally on Windows)
-  - SIGHUP is Unix-only - wrapped in #ifndef _WIN32
-  - Signal handler must re-register itself after handling SIGHUP to receive subsequent signals
-  - ConfigManager.reload() compares old vs new backends and only notifies callbacks if backends changed
----
-
-## Iteration 2 - US-005: Backend Health Monitoring
-- **What was implemented**:
-  - Created HealthChecker class with async health checks using Boost.Beast HTTP client
-  - BackendState enum: healthy, unhealthy, draining
-  - Periodic health check pings (configurable interval, default 5s)
-  - Circuit breaker pattern: marks backend unhealthy after N consecutive failures (default 3)
-  - Auto-recovery: marks backend healthy after N consecutive successes (default 2)
-  - State change callbacks for observability
-  - Thread-safe backend health tracking with std::mutex
-  - HTTP GET /health endpoint checking with 2xx success criteria
-  - Integrated with main.cpp and config reload system
-
-- **Files changed**:
-  - src/balancer/health_checker.hpp: New file - HealthChecker class, BackendState enum, HealthCheckConfig
-  - src/balancer/health_checker.cpp: New file - Implementation with async HTTP health checks
-  - src/main.cpp: Integrated HealthChecker, added start/stop lifecycle, wired to config reload
-  - CMakeLists.txt: Added health_checker.cpp to NTONIX_SOURCES
-
-- **Learnings for future iterations**:
-  - HealthChecker uses enable_shared_from_this for safe capture in async lambdas
-  - Backend health state is preserved when backends are reconfigured via set_backends()
-  - State change callbacks should be copied and called outside the mutex to avoid deadlocks
-  - Health checker uses the server's io_context for async operations
----
-
-## Iteration 3 - US-006: Round-Robin Load Balancer
-- **What was implemented**:
-  - Created LoadBalancer class with Smooth Weighted Round-Robin (SWRR) algorithm
-  - Thread-safe backend selection using std::atomic for current_weight tracking
-  - Integration with HealthChecker to skip unhealthy backends automatically
-  - Returns 503 Service Unavailable when no healthy backends are available
-  - BackendSelection struct returns selected backend config and index
-  - Support for backend weights (backends with higher weights get proportionally more requests)
-  - Updated main.cpp to use LoadBalancer for /v1/chat/completions endpoint
-
-- **Files changed**:
-  - src/balancer/load_balancer.hpp: New file - LoadBalancer class, BackendSelection struct, SWRR algorithm
-  - src/balancer/load_balancer.cpp: New file - Implementation with atomic weight manipulation
-  - src/main.cpp: Integrated LoadBalancer, updated request handler to use backend selection
-  - CMakeLists.txt: Added load_balancer.cpp to NTONIX_SOURCES
-  - mock/simple_backend.py: New file - Simple Python mock backend for testing
-  - docker-compose.test.yml: New file - Test environment with 3 mock backends
-
-- **Learnings for future iterations**:
-  - SWRR algorithm provides smoother distribution than simple round-robin (avoids burst to single backend)
-  - Load balancer takes snapshot of backends under lock, then performs selection lock-free with atomics
-  - Backend weights in SWRR: on each selection, add backend's weight to current_weight, pick highest, subtract total_weight
-  - Load balancer integrated with HealthChecker via constructor parameter - checks is_healthy() during selection
-  - Config reload updates both HealthChecker and LoadBalancer with new backend list
----
-
-## Iteration 4 - US-007: Backend Connection Pool
-- **What was implemented**:
-  - Created ConnectionPoolManager class to manage pools for all backends
-  - Created BackendPool class for per-backend connection pooling with LIFO reuse
-  - PooledConnection class wraps TCP socket with usage tracking and idle time
-  - ConnectionGuard RAII wrapper for automatic connection return on scope exit
-  - Configurable pool size (default 10), idle timeout (60s), cleanup interval (30s)
-  - TCP keep-alive enabled by default, Nagle's algorithm disabled for lower latency
-  - Automatic cleanup timer for removing idle/stale connections
-  - Thread-safe checkout/checkin with std::mutex protection
-  - Pool statistics (available, in_use, total) exposed via get_pool_stats()
-  - Integration with config reload to add/remove backend pools dynamically
-
-- **Files changed**:
-  - src/proxy/connection_pool.hpp: New file - ConnectionPoolManager, BackendPool, PooledConnection, ConnectionGuard
-  - src/proxy/connection_pool.cpp: New file - Full implementation with async cleanup timer
-  - src/main.cpp: Integrated ConnectionPoolManager, added to config reload, start/stop lifecycle
-  - CMakeLists.txt: Added connection_pool.cpp to NTONIX_SOURCES
-
-- **Learnings for future iterations**:
-  - ConnectionPoolManager uses enable_shared_from_this for safe timer callback capture
-  - LIFO (stack-based) reuse keeps recently-used connections warm for better cache locality
-  - ConnectionGuard provides RAII semantics - connection returned even if exception occurs
-  - mark_failed() on ConnectionGuard prevents broken connections from returning to pool
-  - Pool creates new connections synchronously when needed (up to max limit)
-  - Backend key format is "host:port" for consistent pool lookup
-  - Config reload preserves existing pools when backends unchanged
+- Learnings for future iterations:
+  - The codebase uses Boost.Beast for HTTP parsing (http::request, http::response)
+  - Connection pooling uses ConnectionGuard RAII wrapper for automatic return to pool
+  - ForwarderConfig has timeout settings, but sync operations rely on TCP defaults
+  - Error codes: beast::error::timeout, asio::error::connection_refused/reset/broken_pipe
+  - Backend responses filtered of hop-by-hop headers before returning to client
 ---
