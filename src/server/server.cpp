@@ -27,13 +27,14 @@ Server::~Server() {
     wait();
 }
 
-void Server::start(ConnectionHandler handler) {
+void Server::start(ConnectionHandler handler, ReloadHandler reload_handler) {
     if (running_.exchange(true)) {
         spdlog::warn("Server: Already running, ignoring start request");
         return;
     }
 
     connection_handler_ = std::move(handler);
+    reload_handler_ = std::move(reload_handler);
 
     // Setup signal handling for graceful shutdown
     setup_signal_handling();
@@ -207,31 +208,48 @@ void Server::do_accept() {
 }
 
 void Server::setup_signal_handling() {
-    // Handle SIGINT (Ctrl+C) and SIGTERM
-#ifdef _WIN32
+    // Handle SIGINT (Ctrl+C) and SIGTERM for shutdown
     signals_.add(SIGINT);
     signals_.add(SIGTERM);
-#else
-    signals_.add(SIGINT);
-    signals_.add(SIGTERM);
+#ifndef _WIN32
+    // SIGHUP for config reload (Unix only)
     signals_.add(SIGHUP);
 #endif
 
-    signals_.async_wait(
-        [this](boost::system::error_code ec, int signal_number) {
-            if (ec) {
-                if (ec != asio::error::operation_aborted) {
-                    spdlog::debug("Server: Signal handler error: {}", ec.message());
-                }
-                return;
+    auto handle_signal = [this](boost::system::error_code ec, int signal_number) {
+        if (ec) {
+            if (ec != asio::error::operation_aborted) {
+                spdlog::debug("Server: Signal handler error: {}", ec.message());
             }
-
-            spdlog::info("Server: Received signal {} - initiating shutdown", signal_number);
-            stop();
+            return;
         }
-    );
 
-    spdlog::debug("Server: Signal handlers installed (SIGINT, SIGTERM)");
+#ifndef _WIN32
+        // SIGHUP triggers config reload, not shutdown
+        if (signal_number == SIGHUP) {
+            spdlog::info("Server: Received SIGHUP - reloading configuration");
+            if (reload_handler_) {
+                try {
+                    reload_handler_();
+                } catch (const std::exception& e) {
+                    spdlog::error("Server: Config reload failed: {}", e.what());
+                }
+            } else {
+                spdlog::warn("Server: No reload handler configured, ignoring SIGHUP");
+            }
+            // Re-register for next signal
+            setup_signal_handling();
+            return;
+        }
+#endif
+
+        spdlog::info("Server: Received signal {} - initiating shutdown", signal_number);
+        stop();
+    };
+
+    signals_.async_wait(handle_signal);
+
+    spdlog::debug("Server: Signal handlers installed (SIGINT, SIGTERM, SIGHUP)");
 }
 
 } // namespace ntonix::server

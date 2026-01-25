@@ -1,0 +1,22 @@
+{
+  "server": {
+    "port": 8080,
+    "ssl_port": 8443,
+    "threads": 4,
+    "bind_address": "0.0.0.0"
+  },
+  "backends": [
+    {"host": "localhost", "port": 8001, "weight": 1},
+    {"host": "localhost", "port": 8002, "weight": 1}
+  ],
+  "cache": {
+    "enabled": true,
+    "max_size_mb": 512,
+    "ttl_seconds": 3600
+  },
+  "ssl": {
+    "enabled": false,
+    "cert_file": "server.crt",
+    "key_file": "server.key"
+  }
+}

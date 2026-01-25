@@ -37,6 +37,11 @@ struct ServerConfig {
 using ConnectionHandler = std::function<void(tcp::socket)>;
 
 /**
+ * Reload handler type - called when SIGHUP is received (Unix only)
+ */
+using ReloadHandler = std::function<void()>;
+
+/**
  * Main server class - manages io_context, thread pool, and TCP acceptor
  *
  * Uses std::jthread with stop_token for graceful shutdown.
@@ -56,8 +61,9 @@ public:
     /**
      * Start the server - begins accepting connections
      * @param handler Callback invoked for each accepted connection
+     * @param reload_handler Optional callback invoked on SIGHUP (Unix only)
      */
-    void start(ConnectionHandler handler);
+    void start(ConnectionHandler handler, ReloadHandler reload_handler = nullptr);
 
     /**
      * Request graceful shutdown
@@ -98,6 +104,7 @@ private:
 
     std::vector<std::jthread> thread_pool_;
     ConnectionHandler connection_handler_;
+    ReloadHandler reload_handler_;
 
     std::atomic<bool> running_{false};
     std::atomic<std::uint64_t> connections_accepted_{0};

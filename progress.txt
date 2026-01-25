@@ -1,86 +1,25 @@
----
-## Iteration 1 - US-001: Project Foundation and Build System
-- What was implemented:
-  - CMakeLists.txt with C++20 standard, Boost.Asio/Beast, OpenSSL, nlohmann_json, spdlog, xxHash
-  - CMakePresets.json for modern CMake workflow (debug, release, vcpkg variants)
-  - vcpkg.json manifest for easy dependency installation
-  - Project directory structure per PRD specification
-  - Minimal main.cpp that verifies all dependencies compile
-  - .gitignore for build artifacts
-
-- Files changed:
-  - CMakeLists.txt (new)
-  - CMakePresets.json (new)
-  - vcpkg.json (new)
-  - .gitignore (new)
-  - src/main.cpp (new)
-  - Created directories: src/{server,proxy,balancer,cache,config,util}, tests/integration, mock, docs, config
-
-- Learnings for future iterations:
-  - Development environment may not have CMake/Boost/OpenSSL installed - use Docker for reliable builds
-  - FetchContent is used as fallback for nlohmann_json, spdlog, xxHash when not found via find_package
-  - vcpkg preset requires VCPKG_ROOT environment variable to be set
-  - Windows builds need _WIN32_WINNT=0x0A00 for Boost.Asio
-  - C++20 features like std::jthread require compiler support (GCC 10+, Clang 11+, MSVC 19.28+)
+﻿# Ralph Progress Log
+Started: 01/25/2026 14:00:29
 ---
 
----
-## Iteration 2 - US-002: Asynchronous I/O Foundation
-- What was implemented:
-  - Server class with io_context and configurable thread pool (uses hardware_concurrency by default)
-  - Graceful shutdown using std::jthread with stop_token coordination
-  - Signal handling for SIGINT, SIGTERM (and SIGHUP on non-Windows)
-  - TCP acceptor on configurable port with async_accept loop
-  - Connection handler callback pattern for extensibility
-  - Work guard to keep io_context alive until explicit shutdown
-  - Dockerfile.build for Docker-based compilation and testing
+## Iteration 1 - US-004: Configuration System (Complete SIGHUP Hot-Reload)
+- **What was implemented**:
+  - Added SIGHUP signal handling differentiation - SIGHUP now triggers config reload instead of shutdown
+  - Added ReloadHandler callback type to Server class
+  - Updated Server::start() to accept optional reload_handler parameter
+  - Wired up ConfigManager::reload() with Server's SIGHUP handler in main.cpp
+  - Signal handler re-registers itself after SIGHUP to allow multiple reloads
 
-- Files changed:
-  - src/server/server.hpp (new) - Server class declaration with ServerConfig struct
-  - src/server/server.cpp (new) - Full implementation of async server
-  - src/main.cpp (modified) - Updated to use new Server class with simple HTTP response handler
-  - CMakeLists.txt (modified) - Added server.cpp to sources, relaxed Boost version to 1.74+
-  - Dockerfile.build (new) - Docker build environment for compilation
+- **Files changed**:
+  - src/server/server.hpp: Added ReloadHandler type, updated start() signature, added reload_handler_ member
+  - src/server/server.cpp: Modified setup_signal_handling() to differentiate SIGHUP from shutdown signals
+  - src/main.cpp: Wired reload_handler to call config_manager.reload()
 
-- Learnings for future iterations:
-  - Ubuntu 22.04 ships with Boost 1.74, not 1.83 - relaxed version requirement
-  - xxHash FetchContent requires SOURCE_SUBDIR cmake_unofficial to find CMakeLists.txt
-  - Docker is reliable for testing when dev environment lacks CMake/Boost
-  - std::jthread automatically joins on destruction, simplifying shutdown
-  - work_guard is essential to prevent io_context from exiting when no work pending
-  - Use boost::system::error_code for non-throwing error handling in async callbacks
-  - Signal handling works cross-platform with Boost.Asio signal_set
----
+- **Note**: The configuration system itself (JSON parsing, env vars, CLI args, validation) was already implemented in previous commits. This iteration completed the hot-reload functionality.
 
----
-## Iteration 3 - US-003: HTTP/1.1 Request Parsing
-- What was implemented:
-  - Connection class using Boost.Beast for HTTP/1.1 parsing
-  - HttpRequest struct to hold parsed request data (method, target, headers, body)
-  - HttpResponse struct for building responses
-  - Async read/write with beast::tcp_stream and flat_buffer
-  - Automatic extraction of Host, Content-Type, Authorization, X-Request-ID headers
-  - 400 Bad Request for malformed requests (invalid method, target, version)
-  - Keep-alive connection support
-  - Chunked transfer encoding handled automatically by Beast
-  - OpenAI-compatible /v1/chat/completions endpoint (mock response)
-  - /health endpoint for health checks
-  - Content-Type validation for POST requests
-
-- Files changed:
-  - src/server/connection.hpp (new) - Connection class and HttpRequest/HttpResponse structs
-  - src/server/connection.cpp (new) - Full implementation with async read/write
-  - src/main.cpp (modified) - Updated to use Connection handler with request routing
-  - CMakeLists.txt (modified) - Added connection.cpp to sources
-
-- Learnings for future iterations:
-  - beast::bind_front_handler binds arguments BEFORE the callback's (ec, bytes) params
-  - Don't try to pass extra arguments through bind_front_handler - use member variables or lambdas
-  - beast::flat_buffer is reusable across multiple requests on the same connection
-  - http::async_read handles chunked transfer encoding automatically
-  - Use designated initializers with default values to avoid -Wmissing-field-initializers warnings
-  - request_.keep_alive() returns the connection preference based on HTTP version and headers
-  - response_.prepare_payload() sets Content-Length automatically
-  - beast::tcp_stream provides expires_after() for request timeouts
-  - enable_shared_from_this is required for passing shared_ptr to async callbacks
+- **Learnings for future iterations**:
+  - Build and test with Docker using Dockerfile.build (cmake not installed locally on Windows)
+  - SIGHUP is Unix-only - wrapped in #ifndef _WIN32
+  - Signal handler must re-register itself after handling SIGHUP to receive subsequent signals
+  - ConfigManager.reload() compares old vs new backends and only notifies callbacks if backends changed
 ---

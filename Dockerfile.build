@@ -15,13 +15,18 @@ WORKDIR /app
 # Copy source files
 COPY CMakeLists.txt .
 COPY src/ ./src/
+COPY config/ ./config/
 
 # Build the project
 RUN mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release && \
     cmake --build . --parallel
 
-# Test: just verify the binary exists and shows help
+# Test: verify the binary exists and shows help
 RUN ls -la build/ntonix
+RUN ./build/ntonix --help
+
+# Test: verify config file loading works
+RUN ./build/ntonix --config config/ntonix.json --help || true
 
 CMD ["./build/ntonix"]

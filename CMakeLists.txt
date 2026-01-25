@@ -83,6 +83,7 @@ set(NTONIX_SOURCES
     src/main.cpp
     src/server/server.cpp
     src/server/connection.cpp
+    src/config/config.cpp
 )
 
 # Main executable

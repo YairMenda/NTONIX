@@ -4,6 +4,7 @@
  * A C++20 reverse proxy designed to optimize local LLM cluster infrastructure.
  */
 
+#include "config/config.hpp"
 #include "server/server.hpp"
 #include "server/connection.hpp"
 
@@ -15,28 +16,61 @@
 namespace asio = boost::asio;
 
 int main(int argc, char* argv[]) {
-    // Suppress unused parameter warnings
-    (void)argc;
-    (void)argv;
-
     // Set log level (DEBUG for development)
     spdlog::set_level(spdlog::level::debug);
 
     spdlog::info("NTONIX AI Inference Gateway v0.1.0");
-    spdlog::info("Starting server...");
 
     try {
-        // Configure server
-        ntonix::server::ServerConfig config;
-        config.port = 8080;
-        config.thread_count = std::max(1u, std::thread::hardware_concurrency());
-        config.bind_address = "0.0.0.0";
+        // Load configuration
+        ntonix::config::ConfigManager config_manager;
+        if (!config_manager.load(argc, argv)) {
+            // --help was requested
+            return 0;
+        }
+
+        auto config = config_manager.get_config();
+
+        // Configure server from loaded config
+        ntonix::server::ServerConfig server_config;
+        server_config.port = config.server.port;
+        server_config.thread_count = config.server.threads > 0
+            ? config.server.threads
+            : std::max(1u, std::thread::hardware_concurrency());
+        server_config.bind_address = config.server.bind_address;
 
         spdlog::info("Configuration: port={}, threads={}, bind={}",
-                    config.port, config.thread_count, config.bind_address);
+                    server_config.port, server_config.thread_count, server_config.bind_address);
+
+        // Log backend configuration
+        if (config.backends.empty()) {
+            spdlog::warn("No backends configured - proxy will return 503 for all forwarding requests");
+        } else {
+            spdlog::info("Backends configured:");
+            for (const auto& backend : config.backends) {
+                spdlog::info("  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
+            }
+        }
+
+        // Log cache configuration
+        if (config.cache.enabled) {
+            spdlog::info("Cache: enabled, max_size={}MB, ttl={}s",
+                        config.cache.max_size_mb, config.cache.ttl_seconds);
+        } else {
+            spdlog::info("Cache: disabled");
+        }
 
         // Create and start server
-        ntonix::server::Server server(config);
+        ntonix::server::Server server(server_config);
+
+        // Register SIGHUP handler for config reload (Unix only, handled in server via signal_set)
+        config_manager.on_reload([](const std::vector<ntonix::config::BackendConfig>& backends) {
+            spdlog::info("Backend configuration reloaded with {} backends", backends.size());
+            for (const auto& backend : backends) {
+                spdlog::info("  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
+            }
+            // Future: Update load balancer with new backend list
+        });
 
         // HTTP request handler using Boost.Beast
         auto request_handler = [](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
@@ -125,9 +159,15 @@ int main(int argc, char* argv[]) {
         };
 
         // Connection handler - wraps each connection with HTTP parsing
-        server.start([request_handler](asio::ip::tcp::socket socket) {
-            ntonix::server::handle_connection(std::move(socket), request_handler);
-        });
+        // Reload handler - called on SIGHUP to reload configuration
+        server.start(
+            [request_handler](asio::ip::tcp::socket socket) {
+                ntonix::server::handle_connection(std::move(socket), request_handler);
+            },
+            [&config_manager]() {
+                config_manager.reload();
+            }
+        );
 
         spdlog::info("Server started successfully");
         spdlog::info("Press Ctrl+C to stop");

@@ -78,15 +78,15 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As an operator, I need flexible configuration so that I can customize the proxy for different environments.
 
 **Acceptance Criteria:**
-- [ ] JSON configuration file parser (nlohmann/json or Boost.JSON)
-- [ ] Environment variable support (NTONIX_PORT, NTONIX_BACKENDS, etc.)
-- [ ] Command-line argument parsing (--port, --config, --help)
-- [ ] Configuration hierarchy: CLI > Environment > Config File > Defaults
-- [ ] Validate configuration and report errors clearly on startup
-- [ ] Hot-reload support for backend list changes (SIGHUP)
+- [x] JSON configuration file parser (nlohmann/json or Boost.JSON)
+- [x] Environment variable support (NTONIX_PORT, NTONIX_BACKENDS, etc.)
+- [x] Command-line argument parsing (--port, --config, --help)
+- [x] Configuration hierarchy: CLI > Environment > Config File > Defaults
+- [x] Validate configuration and report errors clearly on startup
+- [x] Hot-reload support for backend list changes (SIGHUP)
 
 - **Priority:** 2
-- **Status:** false
+- **Status:** true
 - **Notes:** Standard pattern used by NGINX, Redis, PostgreSQL.
 
 **Configuration Schema:**
