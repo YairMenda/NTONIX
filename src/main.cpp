@@ -4,56 +4,74 @@
  * A C++20 reverse proxy designed to optimize local LLM cluster infrastructure.
  */
 
+#include "server/server.hpp"
+
 #include <boost/asio.hpp>
-#include <boost/beast.hpp>
-#include <boost/asio/ssl.hpp>
-#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
-#include <xxhash.h>
 
 #include <iostream>
-#include <thread>
-#include <atomic>
 
 namespace asio = boost::asio;
-namespace beast = boost::beast;
-namespace ssl = boost::asio::ssl;
-using json = nlohmann::json;
 
 int main(int argc, char* argv[]) {
+    // Set log level (DEBUG for development)
+    spdlog::set_level(spdlog::level::debug);
+
     spdlog::info("NTONIX AI Inference Gateway v0.1.0");
-    spdlog::info("Build verification successful!");
+    spdlog::info("Starting server...");
 
-    // Verify Boost.Asio
-    asio::io_context io_ctx;
-    spdlog::info("Boost.Asio io_context initialized");
+    try {
+        // Configure server
+        ntonix::server::ServerConfig config;
+        config.port = 8080;
+        config.thread_count = std::max(1u, std::thread::hardware_concurrency());
+        config.bind_address = "0.0.0.0";
 
-    // Verify OpenSSL via Boost.Asio SSL
-    ssl::context ssl_ctx(ssl::context::tlsv12_server);
-    spdlog::info("OpenSSL SSL context created (TLS 1.2+)");
+        spdlog::info("Configuration: port={}, threads={}, bind={}",
+                    config.port, config.thread_count, config.bind_address);
 
-    // Verify nlohmann/json
-    json config = {
-        {"server", {{"port", 8080}}},
-        {"backends", json::array()}
-    };
-    spdlog::info("JSON parsing working: {}", config.dump());
+        // Create and start server
+        ntonix::server::Server server(config);
 
-    // Verify xxHash
-    const char* test_data = "test prompt for hashing";
-    XXH64_hash_t hash = XXH64(test_data, strlen(test_data), 0);
-    spdlog::info("xxHash working: hash={:#016x}", hash);
+        // Simple echo handler for testing - logs connection and echoes back
+        server.start([](asio::ip::tcp::socket socket) {
+            // For now, just log that we got a connection
+            // Full HTTP handling will come in US-003
+            boost::system::error_code ec;
+            auto remote = socket.remote_endpoint(ec);
+            if (!ec) {
+                spdlog::debug("Handler: Processing connection from {}:{}",
+                             remote.address().to_string(), remote.port());
+            }
 
-    // Verify C++20 features
-    std::jthread worker([](std::stop_token st) {
-        spdlog::info("std::jthread with stop_token working");
-    });
+            // Simple test response - write something back to verify socket works
+            const std::string response =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: 35\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "NTONIX Gateway - Connection OK!\r\n";
 
-    std::atomic<int> counter{0};
-    spdlog::info("std::atomic working: count={}", counter.load());
+            asio::write(socket, asio::buffer(response), ec);
+            if (ec) {
+                spdlog::debug("Handler: Write error: {}", ec.message());
+            }
 
-    spdlog::info("All dependencies verified successfully!");
-    spdlog::info("Ready for development.");
+            socket.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+        });
 
-    return 0;
+        spdlog::info("Server started successfully");
+        spdlog::info("Press Ctrl+C to stop");
+
+        // Wait for shutdown (blocks until signal received)
+        server.wait();
+
+        spdlog::info("Server stopped gracefully");
+        return 0;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Fatal error: {}", e.what());
+        return 1;
+    }
 }

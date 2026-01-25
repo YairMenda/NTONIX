@@ -46,14 +46,14 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a developer, I need an async I/O foundation using Boost.Asio so that the proxy can handle thousands of concurrent connections without blocking.
 
 **Acceptance Criteria:**
-- [ ] io_context initialized and running on configurable thread pool
-- [ ] Graceful shutdown mechanism using std::jthread and stop_token
-- [ ] Signal handling (SIGINT, SIGTERM) for clean termination
-- [ ] Basic TCP acceptor listening on configured port
-- [ ] Connection accepted and logged without blocking other connections
+- [x] io_context initialized and running on configurable thread pool
+- [x] Graceful shutdown mechanism using std::jthread and stop_token
+- [x] Signal handling (SIGINT, SIGTERM) for clean termination
+- [x] Basic TCP acceptor listening on configured port
+- [x] Connection accepted and logged without blocking other connections
 
 - **Priority:** 1
-- **Status:** false
+- **Status:** true
 - **Notes:** Core async foundation. All subsequent I/O builds on this.
 
 ---

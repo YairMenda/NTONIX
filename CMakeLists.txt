@@ -35,7 +35,8 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
 endif()
 
 # Find required packages
-find_package(Boost 1.83 REQUIRED COMPONENTS system)
+# Boost 1.74+ works - 1.83 preferred but not required
+find_package(Boost 1.74 REQUIRED COMPONENTS system)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -71,15 +72,16 @@ if(NOT xxHash_FOUND)
         xxHash
         GIT_REPOSITORY https://github.com/Cyan4973/xxHash.git
         GIT_TAG v0.8.2
+        SOURCE_SUBDIR cmake_unofficial
     )
     set(XXHASH_BUILD_XXHSUM OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(xxHash)
-    add_library(xxHash::xxhash ALIAS xxhash)
 endif()
 
 # Source files
 set(NTONIX_SOURCES
     src/main.cpp
+    src/server/server.cpp
 )
 
 # Main executable
