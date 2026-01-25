@@ -7,11 +7,13 @@
 #include "config/config.hpp"
 #include "server/server.hpp"
 #include "server/connection.hpp"
+#include "balancer/health_checker.hpp"
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
 
 #include <iostream>
+#include <memory>
 
 namespace asio = boost::asio;
 
@@ -63,13 +65,38 @@ int main(int argc, char* argv[]) {
         // Create and start server
         ntonix::server::Server server(server_config);
 
+        // Create health checker for backend monitoring
+        ntonix::balancer::HealthCheckConfig health_config;
+        health_config.interval = std::chrono::milliseconds(5000);  // Check every 5 seconds
+        health_config.timeout = std::chrono::milliseconds(2000);   // 2 second timeout
+        health_config.unhealthy_threshold = 3;                      // Mark unhealthy after 3 failures
+        health_config.healthy_threshold = 2;                        // Mark healthy after 2 successes
+
+        auto health_checker = std::make_shared<ntonix::balancer::HealthChecker>(
+            server.get_io_context(), health_config);
+
+        // Set initial backends
+        health_checker->set_backends(config.backends);
+
+        // Register state change callback for logging
+        health_checker->on_state_change([](
+            const ntonix::config::BackendConfig& backend,
+            ntonix::balancer::BackendState old_state,
+            ntonix::balancer::BackendState new_state) {
+            spdlog::info("Backend {}:{} health state: {} -> {}",
+                         backend.host, backend.port,
+                         ntonix::balancer::to_string(old_state),
+                         ntonix::balancer::to_string(new_state));
+        });
+
         // Register SIGHUP handler for config reload (Unix only, handled in server via signal_set)
-        config_manager.on_reload([](const std::vector<ntonix::config::BackendConfig>& backends) {
+        config_manager.on_reload([health_checker](const std::vector<ntonix::config::BackendConfig>& backends) {
             spdlog::info("Backend configuration reloaded with {} backends", backends.size());
             for (const auto& backend : backends) {
                 spdlog::info("  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
             }
-            // Future: Update load balancer with new backend list
+            // Update health checker with new backend list
+            health_checker->set_backends(backends);
         });
 
         // HTTP request handler using Boost.Beast
@@ -169,11 +196,20 @@ int main(int argc, char* argv[]) {
             }
         );
 
+        // Start health checker after server starts (uses server's io_context)
+        if (!config.backends.empty()) {
+            health_checker->start();
+            spdlog::info("Health checker started for {} backends", config.backends.size());
+        }
+
         spdlog::info("Server started successfully");
         spdlog::info("Press Ctrl+C to stop");
 
         // Wait for shutdown (blocks until signal received)
         server.wait();
+
+        // Stop health checker
+        health_checker->stop();
 
         spdlog::info("Server stopped gracefully");
         return 0;

@@ -119,15 +119,15 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a proxy, I need to monitor backend health so that I only route requests to healthy nodes.
 
 **Acceptance Criteria:**
-- [ ] Periodic health check pings to each backend (configurable interval)
-- [ ] Track backend state: healthy, unhealthy, draining
-- [ ] Remove unhealthy backends from load balancer pool automatically
-- [ ] Re-add backends to pool when health checks pass again
-- [ ] Log health state transitions for observability
-- [ ] Circuit breaker: mark backend unhealthy after N consecutive failures
+- [x] Periodic health check pings to each backend (configurable interval)
+- [x] Track backend state: healthy, unhealthy, draining
+- [x] Remove unhealthy backends from load balancer pool automatically
+- [x] Re-add backends to pool when health checks pass again
+- [x] Log health state transitions for observability
+- [x] Circuit breaker: mark backend unhealthy after N consecutive failures
 
 - **Priority:** 2
-- **Status:** false
+- **Status:** true
 - **Notes:** Essential for production reliability. Health endpoint: GET /health.
 
 ---

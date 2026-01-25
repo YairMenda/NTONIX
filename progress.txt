@@ -23,3 +23,28 @@ Started: 01/25/2026 14:00:29
   - Signal handler must re-register itself after handling SIGHUP to receive subsequent signals
   - ConfigManager.reload() compares old vs new backends and only notifies callbacks if backends changed
 ---
+
+## Iteration 2 - US-005: Backend Health Monitoring
+- **What was implemented**:
+  - Created HealthChecker class with async health checks using Boost.Beast HTTP client
+  - BackendState enum: healthy, unhealthy, draining
+  - Periodic health check pings (configurable interval, default 5s)
+  - Circuit breaker pattern: marks backend unhealthy after N consecutive failures (default 3)
+  - Auto-recovery: marks backend healthy after N consecutive successes (default 2)
+  - State change callbacks for observability
+  - Thread-safe backend health tracking with std::mutex
+  - HTTP GET /health endpoint checking with 2xx success criteria
+  - Integrated with main.cpp and config reload system
+
+- **Files changed**:
+  - src/balancer/health_checker.hpp: New file - HealthChecker class, BackendState enum, HealthCheckConfig
+  - src/balancer/health_checker.cpp: New file - Implementation with async HTTP health checks
+  - src/main.cpp: Integrated HealthChecker, added start/stop lifecycle, wired to config reload
+  - CMakeLists.txt: Added health_checker.cpp to NTONIX_SOURCES
+
+- **Learnings for future iterations**:
+  - HealthChecker uses enable_shared_from_this for safe capture in async lambdas
+  - Backend health state is preserved when backends are reconfigured via set_backends()
+  - State change callbacks should be copied and called outside the mutex to avoid deadlocks
+  - Health checker uses the server's io_context for async operations
+---

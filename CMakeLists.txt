@@ -84,6 +84,7 @@ set(NTONIX_SOURCES
     src/server/server.cpp
     src/server/connection.cpp
     src/config/config.cpp
+    src/balancer/health_checker.cpp
 )
 
 # Main executable
