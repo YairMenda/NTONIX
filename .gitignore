@@ -1,0 +1,54 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Dependencies (fetched by CMake)
+_deps/
+
+# Logs
+*.log
+
+# Certificates (for testing only - never commit real certs)
+*.pem
+*.crt
+*.key
+!config/*.example.crt
+!config/*.example.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Docker
+.docker/
+
+# OS files
+.DS_Store
+Thumbs.db

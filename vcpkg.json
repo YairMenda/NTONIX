@@ -1,0 +1,27 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+    "name": "ntonix",
+    "version": "0.1.0",
+    "description": "High-Performance AI Inference Gateway",
+    "homepage": "https://github.com/yourusername/ntonix",
+    "license": "MIT",
+    "dependencies": [
+        {
+            "name": "boost-asio",
+            "version>=": "1.83.0"
+        },
+        {
+            "name": "boost-beast",
+            "version>=": "1.83.0"
+        },
+        {
+            "name": "boost-system",
+            "version>=": "1.83.0"
+        },
+        "openssl",
+        "nlohmann-json",
+        "spdlog",
+        "xxhash"
+    ],
+    "builtin-baseline": "2024.01.12"
+}

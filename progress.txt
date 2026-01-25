@@ -1,0 +1,25 @@
+---
+## Iteration 1 - US-001: Project Foundation and Build System
+- What was implemented:
+  - CMakeLists.txt with C++20 standard, Boost.Asio/Beast, OpenSSL, nlohmann_json, spdlog, xxHash
+  - CMakePresets.json for modern CMake workflow (debug, release, vcpkg variants)
+  - vcpkg.json manifest for easy dependency installation
+  - Project directory structure per PRD specification
+  - Minimal main.cpp that verifies all dependencies compile
+  - .gitignore for build artifacts
+
+- Files changed:
+  - CMakeLists.txt (new)
+  - CMakePresets.json (new)
+  - vcpkg.json (new)
+  - .gitignore (new)
+  - src/main.cpp (new)
+  - Created directories: src/{server,proxy,balancer,cache,config,util}, tests/integration, mock, docs, config
+
+- Learnings for future iterations:
+  - Development environment may not have CMake/Boost/OpenSSL installed - use Docker for reliable builds
+  - FetchContent is used as fallback for nlohmann_json, spdlog, xxHash when not found via find_package
+  - vcpkg preset requires VCPKG_ROOT environment variable to be set
+  - Windows builds need _WIN32_WINNT=0x0A00 for Boost.Asio
+  - C++20 features like std::jthread require compiler support (GCC 10+, Clang 11+, MSVC 19.28+)
+---
