@@ -136,14 +136,14 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a proxy, I need to distribute requests across backends so that load is evenly spread.
 
 **Acceptance Criteria:**
-- [ ] Implement weighted round-robin algorithm
-- [ ] Thread-safe backend selection using atomic operations
-- [ ] Skip unhealthy backends in rotation
-- [ ] Support backend weights for heterogeneous clusters
-- [ ] Return 503 Service Unavailable when no healthy backends exist
+- [x] Implement weighted round-robin algorithm
+- [x] Thread-safe backend selection using atomic operations
+- [x] Skip unhealthy backends in rotation
+- [x] Support backend weights for heterogeneous clusters
+- [x] Return 503 Service Unavailable when no healthy backends exist
 
 - **Priority:** 2
-- **Status:** false
+- **Status:** true
 - **Notes:** Simple, predictable, easy to explain in interviews.
 
 ---

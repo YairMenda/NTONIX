@@ -8,6 +8,7 @@
 #include "server/server.hpp"
 #include "server/connection.hpp"
 #include "balancer/health_checker.hpp"
+#include "balancer/load_balancer.hpp"
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
@@ -89,18 +90,24 @@ int main(int argc, char* argv[]) {
                          ntonix::balancer::to_string(new_state));
         });
 
+        // Create load balancer with health checker integration
+        auto load_balancer = std::make_shared<ntonix::balancer::LoadBalancer>(health_checker);
+        load_balancer->set_backends(config.backends);
+        spdlog::info("Load balancer configured with {} backends", config.backends.size());
+
         // Register SIGHUP handler for config reload (Unix only, handled in server via signal_set)
-        config_manager.on_reload([health_checker](const std::vector<ntonix::config::BackendConfig>& backends) {
+        config_manager.on_reload([health_checker, load_balancer](const std::vector<ntonix::config::BackendConfig>& backends) {
             spdlog::info("Backend configuration reloaded with {} backends", backends.size());
             for (const auto& backend : backends) {
                 spdlog::info("  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
             }
-            // Update health checker with new backend list
+            // Update health checker and load balancer with new backend list
             health_checker->set_backends(backends);
+            load_balancer->set_backends(backends);
         });
 
         // HTTP request handler using Boost.Beast
-        auto request_handler = [](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
+        auto request_handler = [load_balancer](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
             using namespace ntonix::server;
             namespace http = boost::beast::http;
 
@@ -133,12 +140,24 @@ int main(int argc, char* argv[]) {
                 // Log the request body (for development)
                 spdlog::debug("Request body: {}", req.body);
 
-                // For now, return a mock response
-                // Real implementation will forward to LLM backend
-                return HttpResponse{
-                    .status = http::status::ok,
-                    .content_type = "application/json",
-                    .body = R"({
+                // Select backend using load balancer
+                auto backend_selection = load_balancer->select_backend();
+                if (!backend_selection) {
+                    spdlog::warn("No healthy backends available - returning 503");
+                    return HttpResponse{
+                        .status = http::status::service_unavailable,
+                        .content_type = "application/json",
+                        .body = R"({"error": "No healthy backends available"})"
+                    };
+                }
+
+                const auto& backend = backend_selection->backend;
+                spdlog::info("Load balancer selected backend {}:{} (index={})",
+                            backend.host, backend.port, backend_selection->index);
+
+                // For now, return a mock response indicating which backend was selected
+                // Real implementation will forward to selected LLM backend
+                std::string response_body = R"({
   "id": "chatcmpl-mock",
   "object": "chat.completion",
   "created": 1234567890,
@@ -147,7 +166,7 @@ int main(int argc, char* argv[]) {
     "index": 0,
     "message": {
       "role": "assistant",
-      "content": "This is a mock response from NTONIX gateway."
+      "content": "Mock response - would be forwarded to )" + backend.host + ":" + std::to_string(backend.port) + R"("
     },
     "finish_reason": "stop"
   }],
@@ -155,8 +174,16 @@ int main(int argc, char* argv[]) {
     "prompt_tokens": 10,
     "completion_tokens": 20,
     "total_tokens": 30
+  },
+  "_ntonix": {
+    "backend": ")" + backend.host + ":" + std::to_string(backend.port) + R"(",
+    "backend_index": )" + std::to_string(backend_selection->index) + R"(
   }
-})"
+})";
+                return HttpResponse{
+                    .status = http::status::ok,
+                    .content_type = "application/json",
+                    .body = response_body
                 };
             }
 

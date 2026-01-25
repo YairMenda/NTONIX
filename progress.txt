@@ -48,3 +48,29 @@ Started: 01/25/2026 14:00:29
   - State change callbacks should be copied and called outside the mutex to avoid deadlocks
   - Health checker uses the server's io_context for async operations
 ---
+
+## Iteration 3 - US-006: Round-Robin Load Balancer
+- **What was implemented**:
+  - Created LoadBalancer class with Smooth Weighted Round-Robin (SWRR) algorithm
+  - Thread-safe backend selection using std::atomic for current_weight tracking
+  - Integration with HealthChecker to skip unhealthy backends automatically
+  - Returns 503 Service Unavailable when no healthy backends are available
+  - BackendSelection struct returns selected backend config and index
+  - Support for backend weights (backends with higher weights get proportionally more requests)
+  - Updated main.cpp to use LoadBalancer for /v1/chat/completions endpoint
+
+- **Files changed**:
+  - src/balancer/load_balancer.hpp: New file - LoadBalancer class, BackendSelection struct, SWRR algorithm
+  - src/balancer/load_balancer.cpp: New file - Implementation with atomic weight manipulation
+  - src/main.cpp: Integrated LoadBalancer, updated request handler to use backend selection
+  - CMakeLists.txt: Added load_balancer.cpp to NTONIX_SOURCES
+  - mock/simple_backend.py: New file - Simple Python mock backend for testing
+  - docker-compose.test.yml: New file - Test environment with 3 mock backends
+
+- **Learnings for future iterations**:
+  - SWRR algorithm provides smoother distribution than simple round-robin (avoids burst to single backend)
+  - Load balancer takes snapshot of backends under lock, then performs selection lock-free with atomics
+  - Backend weights in SWRR: on each selection, add backend's weight to current_weight, pick highest, subtract total_weight
+  - Load balancer integrated with HealthChecker via constructor parameter - checks is_healthy() during selection
+  - Config reload updates both HealthChecker and LoadBalancer with new backend list
+---
