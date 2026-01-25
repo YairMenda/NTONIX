@@ -89,6 +89,8 @@ set(NTONIX_SOURCES
     src/proxy/connection_pool.cpp
     src/proxy/forwarder.cpp
     src/proxy/stream_pipe.cpp
+    src/cache/cache_key.cpp
+    src/cache/lru_cache.cpp
 )
 
 # Main executable

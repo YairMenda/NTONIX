@@ -202,16 +202,16 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a proxy, I need to cache LLM responses so that identical prompts don't require redundant inference.
 
 **Acceptance Criteria:**
-- [ ] Hash prompt content to create cache key (SHA-256 or XXHash)
-- [ ] Store complete response with metadata (timestamp, size, hit count)
-- [ ] LRU eviction when cache exceeds configured size
-- [ ] std::shared_mutex for concurrent read access
-- [ ] Configurable TTL for cache entries
-- [ ] Cache bypass for requests with Cache-Control: no-cache
-- [ ] Cache statistics endpoint (hit rate, size, entries)
+- [x] Hash prompt content to create cache key (SHA-256 or XXHash)
+- [x] Store complete response with metadata (timestamp, size, hit count)
+- [x] LRU eviction when cache exceeds configured size
+- [x] std::shared_mutex for concurrent read access
+- [x] Configurable TTL for cache entries
+- [x] Cache bypass for requests with Cache-Control: no-cache
+- [x] Cache statistics endpoint (hit rate, size, entries)
 
 - **Priority:** 2
-- **Status:** false
+- **Status:** true
 - **Notes:** Demonstrate understanding of reader-writer locks and cache invalidation.
 
 ---

@@ -11,12 +11,16 @@
 #include "balancer/load_balancer.hpp"
 #include "proxy/connection_pool.hpp"
 #include "proxy/forwarder.hpp"
+#include "cache/lru_cache.hpp"
+#include "cache/cache_key.hpp"
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
 
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 
 namespace asio = boost::asio;
 
@@ -122,6 +126,20 @@ int main(int argc, char* argv[]) {
         spdlog::info("Request forwarder configured (timeout={}s)",
                     forwarder_config.request_timeout.count());
 
+        // Create LRU cache for response caching
+        ntonix::cache::LruCacheConfig cache_config;
+        cache_config.max_size_bytes = config.cache.max_size_mb * 1024 * 1024;
+        cache_config.ttl = std::chrono::seconds(config.cache.ttl_seconds);
+        cache_config.enabled = config.cache.enabled;
+
+        auto response_cache = std::make_shared<ntonix::cache::LruCache>(cache_config);
+        if (config.cache.enabled) {
+            spdlog::info("Response cache configured: max_size={}MB, ttl={}s",
+                        config.cache.max_size_mb, config.cache.ttl_seconds);
+        } else {
+            spdlog::info("Response cache: disabled");
+        }
+
         // Register SIGHUP handler for config reload (Unix only, handled in server via signal_set)
         config_manager.on_reload([health_checker, load_balancer, connection_pool](const std::vector<ntonix::config::BackendConfig>& backends) {
             spdlog::info("Backend configuration reloaded with {} backends", backends.size());
@@ -218,7 +236,7 @@ int main(int argc, char* argv[]) {
         };
 
         // HTTP request handler using Boost.Beast (non-streaming requests)
-        auto request_handler = [load_balancer, forwarder](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
+        auto request_handler = [load_balancer, forwarder, response_cache](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
             using namespace ntonix::server;
             namespace http = boost::beast::http;
 
@@ -238,6 +256,28 @@ int main(int argc, char* argv[]) {
                 };
             }
 
+            // Handle cache statistics endpoint
+            if (req.target == "/cache/stats" && req.method == http::verb::get) {
+                auto stats = response_cache->get_stats();
+                std::ostringstream json;
+                json << "{\n"
+                     << "  \"enabled\": " << (response_cache->is_enabled() ? "true" : "false") << ",\n"
+                     << "  \"hits\": " << stats.hits << ",\n"
+                     << "  \"misses\": " << stats.misses << ",\n"
+                     << "  \"hit_rate\": " << std::fixed << std::setprecision(4) << stats.hit_rate() << ",\n"
+                     << "  \"evictions\": " << stats.evictions << ",\n"
+                     << "  \"expired\": " << stats.expired << ",\n"
+                     << "  \"entries\": " << stats.entries << ",\n"
+                     << "  \"size_bytes\": " << stats.size_bytes << ",\n"
+                     << "  \"max_size_bytes\": " << stats.max_size_bytes << "\n"
+                     << "}";
+                return HttpResponse{
+                    .status = http::status::ok,
+                    .content_type = "application/json",
+                    .body = json.str()
+                };
+            }
+
             // Handle OpenAI-compatible chat completions endpoint (non-streaming only)
             // Note: Streaming requests are handled by streaming_handler above
             if (req.target == "/v1/chat/completions" && req.method == http::verb::post) {
@@ -252,6 +292,36 @@ int main(int argc, char* argv[]) {
 
                 // Log the request body (for development)
                 spdlog::debug("Request body: {}", req.body);
+
+                // Check for cache bypass via Cache-Control header
+                std::string cache_control;
+                auto it = req.raw_request.find(http::field::cache_control);
+                if (it != req.raw_request.end()) {
+                    cache_control = std::string(it->value());
+                }
+                bool bypass_cache = ntonix::cache::should_bypass_cache(cache_control);
+
+                // Generate cache key from request
+                auto cache_key = ntonix::cache::generate_cache_key(
+                    std::string(http::to_string(req.method)),
+                    req.target,
+                    req.body
+                );
+
+                // Try cache lookup (unless bypass requested)
+                if (!bypass_cache && response_cache->is_enabled()) {
+                    auto cached = response_cache->get(cache_key);
+                    if (cached) {
+                        spdlog::info("Cache HIT: key={}", cache_key.to_string());
+                        return HttpResponse{
+                            .status = http::status::ok,
+                            .content_type = cached->content_type,
+                            .body = cached->body,
+                            .headers = {{"X-Cache", "HIT"}}
+                        };
+                    }
+                    spdlog::debug("Cache MISS: key={}", cache_key.to_string());
+                }
 
                 // Select backend using load balancer
                 auto backend_selection = load_balancer->select_backend();
@@ -280,6 +350,16 @@ int main(int argc, char* argv[]) {
                     spdlog::warn("Forward failed: {}", result.error_message);
                 }
 
+                // Cache successful responses (2xx status codes only)
+                if (result.success && response_cache->is_enabled() && !bypass_cache &&
+                    static_cast<int>(result.response.status) >= 200 &&
+                    static_cast<int>(result.response.status) < 300) {
+                    response_cache->put(cache_key, result.response.body, result.response.content_type);
+                    spdlog::debug("Cached response: key={}, size={}", cache_key.to_string(), result.response.body.size());
+                }
+
+                // Add cache header to response
+                result.response.headers.push_back({"X-Cache", "MISS"});
                 return result.response;
             }
 
@@ -294,6 +374,7 @@ int main(int argc, char* argv[]) {
   "description": "High-Performance AI Inference Gateway",
   "endpoints": {
     "health": "/health",
+    "cache_stats": "/cache/stats",
     "chat_completions": "/v1/chat/completions"
   }
 })"

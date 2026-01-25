@@ -57,3 +57,38 @@ Started: 01/25/2026 20:19:00
   - OpenAI streaming: Content-Type text/event-stream, ends with "data: [DONE]"
   - After streaming, connection should not be returned to pool (mark_failed)
 ---
+
+## Iteration [3] - US-010: Thread-Safe LRU Cache
+- What was implemented:
+  - CacheKey struct with XXH64 hashing for prompt-based cache keys
+  - generate_cache_key() functions using XXHash for fast, high-quality hashing
+  - should_bypass_cache() for Cache-Control: no-cache/no-store header support
+  - LruCache class with full LRU eviction algorithm using std::list + std::unordered_map
+  - CacheEntry struct with metadata: body, content_type, size_bytes, created_at, last_access, hit_count
+  - CacheStats struct for monitoring: hits, misses, evictions, expired, entries, size_bytes, hit_rate()
+  - std::shared_mutex for concurrent read access with minimal lock contention
+  - Configurable TTL-based expiration checked on access
+  - Size-based eviction when max_size_bytes exceeded
+  - /cache/stats endpoint returning JSON with all cache statistics
+  - Cache integration in request handler: lookup before forwarding, store after successful response
+  - X-Cache: HIT/MISS header added to responses
+
+- Files changed:
+  - src/cache/cache_key.hpp - NEW: CacheKey struct, CacheKeyHash functor, generate_cache_key(), should_bypass_cache()
+  - src/cache/cache_key.cpp - NEW: Implementation using XXH64
+  - src/cache/lru_cache.hpp - NEW: LruCache class, CacheEntry, CacheStats, LruCacheConfig structs
+  - src/cache/lru_cache.cpp - NEW: Full LRU cache implementation
+  - src/main.cpp - Added cache creation, /cache/stats endpoint, cache integration in request handler
+  - CMakeLists.txt - Added cache_key.cpp and lru_cache.cpp to build
+
+- Learnings for future iterations:
+  - XXHash library already included in CMakeLists.txt via FetchContent (xxHash v0.8.2)
+  - Use XXH64 for 64-bit hashes - fast and well-distributed
+  - XXH64_state_t for incremental hashing of multiple strings
+  - LRU implemented with std::list (front=MRU, back=LRU) + unordered_map to iterators
+  - shared_mutex: shared_lock for reads (concurrent), unique_lock for writes (exclusive)
+  - Atomic counters for stats avoid lock contention on read path
+  - HttpResponse.headers vector used for custom headers (X-Cache)
+  - Cache only non-streaming responses (streaming responses bypass cache)
+  - raw_request.find(http::field::cache_control) to access headers from Beast request
+---
