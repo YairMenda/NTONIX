@@ -52,3 +52,6 @@ venv/
 # OS files
 .DS_Store
 Thumbs.db
+ralph.sh
+ralph.ps1
+nul

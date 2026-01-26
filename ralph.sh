@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # Ralph Wiggum - Robust Autonomous Coding Loop
 # Usage: ./ralph.sh [max_iterations]
 
@@ -99,7 +99,7 @@ After completing your task, check PRD.md:
   # Check for completion signal to break the loop
   if echo "$result" | grep -q "<promise>COMPLETE</promise>"; then
     echo ""
-    echo "✅ Ralph completed all tasks in PRD.md!"
+    echo "âœ… Ralph completed all tasks in PRD.md!"
     exit 0
   fi
 
@@ -109,6 +109,6 @@ After completing your task, check PRD.md:
 done
 
 echo ""
-echo "❌ Ralph reached max iterations ($MAX) without completing all tasks."
+echo "âŒ Ralph reached max iterations ($MAX) without completing all tasks."
 echo "Check $PROGRESS_FILE for the last known state."
 exit 1

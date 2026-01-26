@@ -287,16 +287,16 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a developer, I need integration tests so that I can verify end-to-end functionality.
 
 **Acceptance Criteria:**
-- [ ] Test: Request forwarding to single backend
-- [ ] Test: Load balancing distributes across multiple backends
-- [ ] Test: Cache hit returns cached response
-- [ ] Test: Unhealthy backend is skipped
-- [ ] Test: SSL termination works correctly
-- [ ] Test: Streaming responses forwarded correctly
-- [ ] Tests run in CI-compatible manner
+- [x] Test: Request forwarding to single backend
+- [x] Test: Load balancing distributes across multiple backends
+- [x] Test: Cache hit returns cached response
+- [x] Test: Unhealthy backend is skipped
+- [x] Test: SSL termination works correctly
+- [x] Test: Streaming responses forwarded correctly
+- [x] Tests run in CI-compatible manner
 
 - **Priority:** 3
-- **Status:** false
+- **Status:** true
 - **Notes:** Use pytest for integration tests against running proxy.
 
 ---
