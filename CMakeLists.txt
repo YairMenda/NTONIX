@@ -95,6 +95,7 @@ set(NTONIX_SOURCES
     src/cache/cache_key.cpp
     src/cache/lru_cache.cpp
     src/util/logger.cpp
+    src/util/metrics.cpp
 )
 
 # Main executable

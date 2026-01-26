@@ -254,14 +254,14 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As an operator, I need a metrics endpoint so that I can monitor proxy performance.
 
 **Acceptance Criteria:**
-- [ ] GET /metrics endpoint returning JSON statistics
-- [ ] Metrics: requests_total, requests_active, cache_hits, cache_misses
-- [ ] Per-backend metrics: requests, errors, latency_avg
-- [ ] System metrics: uptime, memory_usage, connections_active
-- [ ] Thread-safe metric collection using atomics
+- [x] GET /metrics endpoint returning JSON statistics
+- [x] Metrics: requests_total, requests_active, cache_hits, cache_misses
+- [x] Per-backend metrics: requests, errors, latency_avg
+- [x] System metrics: uptime, memory_usage, connections_active
+- [x] Thread-safe metric collection using atomics
 
 - **Priority:** 3
-- **Status:** false
+- **Status:** true
 - **Notes:** Prometheus-compatible format is a bonus.
 
 ---

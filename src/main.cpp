@@ -16,6 +16,7 @@
 #include "cache/lru_cache.hpp"
 #include "cache/cache_key.hpp"
 #include "util/logger.hpp"
+#include "util/metrics.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/ssl.hpp>
@@ -177,16 +178,22 @@ int main(int argc, char* argv[]) {
             NTONIX_LOG_INFO("cache", "Response cache: disabled");
         }
 
+        // Initialize metrics system
+        auto& metrics = ntonix::util::Metrics::instance();
+        metrics.init(config.backends);
+        NTONIX_LOG_INFO("metrics", "Metrics system initialized");
+
         // Register SIGHUP handler for config reload (Unix only, handled in server via signal_set)
         config_manager.on_reload([health_checker, load_balancer, connection_pool](const std::vector<ntonix::config::BackendConfig>& backends) {
             NTONIX_LOG_INFO("config", "Backend configuration reloaded with {} backends", backends.size());
             for (const auto& backend : backends) {
                 NTONIX_LOG_INFO("config", "  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
             }
-            // Update health checker, load balancer, and connection pool with new backend list
+            // Update health checker, load balancer, connection pool, and metrics with new backend list
             health_checker->set_backends(backends);
             load_balancer->set_backends(backends);
             connection_pool->set_backends(backends);
+            ntonix::util::Metrics::instance().set_backends(backends);
         });
 
         // Streaming request handler - handles SSE streaming responses
@@ -265,6 +272,11 @@ int main(int argc, char* argv[]) {
                             result.stream_result.bytes_forwarded,
                             result.backend_host, result.backend_port,
                             result.latency.count());
+
+                // Track backend metrics for streaming
+                ntonix::util::Metrics::instance().backend_request(
+                    result.backend_host, result.backend_port,
+                    result.success, result.latency);
             } else {
                 // Backend returned non-streaming response, send it to client
                 http::response<http::string_body> response{result.response.status, 11};
@@ -343,6 +355,20 @@ int main(int argc, char* argv[]) {
                 };
             }
 
+            // Handle metrics endpoint
+            if (req.target == "/metrics" && req.method == http::verb::get) {
+                // Update cache memory in metrics before snapshot
+                auto cache_stats = response_cache->get_stats();
+                ntonix::util::Metrics::instance().set_cache_memory(cache_stats.size_bytes);
+
+                auto metrics_snapshot = ntonix::util::Metrics::instance().snapshot();
+                return HttpResponse{
+                    .status = http::status::ok,
+                    .content_type = "application/json",
+                    .body = metrics_snapshot.to_json()
+                };
+            }
+
             // Handle OpenAI-compatible chat completions endpoint (non-streaming only)
             // Note: Streaming requests are handled by streaming_handler above
             if (req.target == "/v1/chat/completions" && req.method == http::verb::post) {
@@ -378,6 +404,7 @@ int main(int argc, char* argv[]) {
                     auto cached = response_cache->get(cache_key);
                     if (cached) {
                         NTONIX_LOG_DEBUG("cache", "Cache HIT: key={}", cache_key.to_string());
+                        ntonix::util::Metrics::instance().cache_hit();
 
                         // Calculate latency and log access
                         auto end_time = std::chrono::steady_clock::now();
@@ -403,6 +430,7 @@ int main(int argc, char* argv[]) {
                         };
                     }
                     NTONIX_LOG_DEBUG("cache", "Cache MISS: key={}", cache_key.to_string());
+                    ntonix::util::Metrics::instance().cache_miss();
                 }
 
                 // Select backend using load balancer
@@ -448,6 +476,11 @@ int main(int argc, char* argv[]) {
                             result.backend_host, result.backend_port,
                             result.latency.count());
 
+                // Track backend metrics
+                ntonix::util::Metrics::instance().backend_request(
+                    result.backend_host, result.backend_port,
+                    result.success, result.latency);
+
                 if (!result.success) {
                     NTONIX_LOG_WARN("proxy", "Forward failed: {}", result.error_message);
                 }
@@ -477,6 +510,7 @@ int main(int argc, char* argv[]) {
   "description": "High-Performance AI Inference Gateway",
   "endpoints": {
     "health": "/health",
+    "metrics": "/metrics",
     "cache_stats": "/cache/stats",
     "chat_completions": "/v1/chat/completions"
   }
