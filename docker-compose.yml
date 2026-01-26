@@ -1,0 +1,98 @@
+# NTONIX Docker Compose Configuration
+# Launches the NTONIX proxy with 2 mock LLM backends for testing/demo
+#
+# Usage:
+#   docker-compose up            # Start all services
+#   docker-compose up -d         # Start in detached mode
+#   docker-compose logs -f       # View logs
+#   docker-compose down          # Stop all services
+#
+# Test endpoints:
+#   curl http://localhost:8080/health       # Proxy health
+#   curl http://localhost:8080/metrics      # Proxy metrics
+#   curl -X POST http://localhost:8080/v1/chat/completions \
+#        -H "Content-Type: application/json" \
+#        -d '{"model":"test","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+
+services:
+  # ============================================================================
+  # NTONIX Proxy
+  # ============================================================================
+  ntonix:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ntonix-proxy
+    ports:
+      - "8080:8080"     # HTTP
+      - "8443:8443"     # HTTPS (when SSL enabled)
+    volumes:
+      - ./config/docker-ntonix.json:/app/config/ntonix.json:ro
+    depends_on:
+      backend-1:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ntonix-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # Mock LLM Backend 1
+  # ============================================================================
+  backend-1:
+    build:
+      context: ./mock
+      dockerfile: Dockerfile
+    container_name: ntonix-backend-1
+    environment:
+      - BACKEND_ID=backend-1
+      - PORT=8001
+      - RESPONSE_DELAY_MS=100
+      - TOKEN_DELAY_MS=50
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - ntonix-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # Mock LLM Backend 2
+  # ============================================================================
+  backend-2:
+    build:
+      context: ./mock
+      dockerfile: Dockerfile
+    container_name: ntonix-backend-2
+    environment:
+      - BACKEND_ID=backend-2
+      - PORT=8001
+      - RESPONSE_DELAY_MS=150    # Slightly slower to demonstrate load balancing
+      - TOKEN_DELAY_MS=60
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - ntonix-network
+    restart: unless-stopped
+
+networks:
+  ntonix-network:
+    driver: bridge

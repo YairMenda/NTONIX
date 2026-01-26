@@ -270,15 +270,15 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a developer, I need Docker support so that the project is easy to build and demo.
 
 **Acceptance Criteria:**
-- [ ] Multi-stage Dockerfile (build + runtime)
-- [ ] Docker Compose with proxy + 2 mock LLM backends
-- [ ] Mock LLM backend (Python FastAPI) with configurable delay
-- [ ] Mock backend supports streaming responses (SSE)
-- [ ] Single command startup: `docker-compose up`
-- [ ] Health checks configured in compose file
+- [x] Multi-stage Dockerfile (build + runtime)
+- [x] Docker Compose with proxy + 2 mock LLM backends
+- [x] Mock LLM backend (Python FastAPI) with configurable delay
+- [x] Mock backend supports streaming responses (SSE)
+- [x] Single command startup: `docker-compose up`
+- [x] Health checks configured in compose file
 
 - **Priority:** 2
-- **Status:** false
+- **Status:** true
 - **Notes:** Critical for interviews. "Run with one command" is impressive.
 
 ---
