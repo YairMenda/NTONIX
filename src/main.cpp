@@ -7,6 +7,8 @@
 #include "config/config.hpp"
 #include "server/server.hpp"
 #include "server/connection.hpp"
+#include "server/ssl_server.hpp"
+#include "server/ssl_connection.hpp"
 #include "balancer/health_checker.hpp"
 #include "balancer/load_balancer.hpp"
 #include "proxy/connection_pool.hpp"
@@ -15,6 +17,7 @@
 #include "cache/cache_key.hpp"
 
 #include <boost/asio.hpp>
+#include <boost/beast/ssl.hpp>
 #include <spdlog/spdlog.h>
 
 #include <iomanip>
@@ -67,6 +70,14 @@ int main(int argc, char* argv[]) {
                         config.cache.max_size_mb, config.cache.ttl_seconds);
         } else {
             spdlog::info("Cache: disabled");
+        }
+
+        // Log SSL configuration
+        if (config.ssl.enabled) {
+            spdlog::info("SSL: enabled, port={}, cert={}, key={}",
+                        config.server.ssl_port, config.ssl.cert_file, config.ssl.key_file);
+        } else {
+            spdlog::info("SSL: disabled");
         }
 
         // Create and start server
@@ -235,6 +246,12 @@ int main(int argc, char* argv[]) {
             return true;  // We handled the request
         };
 
+        // SSL Streaming request handler
+        // Note: For SSL connections, streaming is not yet supported. Streaming requests
+        // will be processed by the normal request handler as non-streaming requests.
+        // This produces correct output but without the streaming behavior.
+        ntonix::server::SslStreamingRequestHandler ssl_streaming_handler = nullptr;
+
         // HTTP request handler using Boost.Beast (non-streaming requests)
         auto request_handler = [load_balancer, forwarder, response_cache](const ntonix::server::HttpRequest& req) -> ntonix::server::HttpResponse {
             using namespace ntonix::server;
@@ -400,6 +417,39 @@ int main(int argc, char* argv[]) {
             }
         );
 
+        // Create SSL server if enabled
+        std::unique_ptr<ntonix::server::SslServer> ssl_server;
+        if (config.ssl.enabled) {
+            try {
+                // Configure SSL server
+                ntonix::server::SslServerConfig ssl_server_config;
+                ssl_server_config.port = config.server.ssl_port;
+                ssl_server_config.bind_address = config.server.bind_address;
+                ssl_server_config.ssl.cert_file = config.ssl.cert_file;
+                ssl_server_config.ssl.key_file = config.ssl.key_file;
+                ssl_server_config.ssl.enable_tls_1_2 = true;
+                ssl_server_config.ssl.enable_tls_1_3 = true;
+
+                // Create SSL server using the main server's io_context
+                ssl_server = std::make_unique<ntonix::server::SslServer>(
+                    server.get_io_context(), ssl_server_config);
+
+                // Start accepting HTTPS connections
+                ssl_server->start(
+                    [request_handler, ssl_streaming_handler](asio::ip::tcp::socket socket,
+                                                              boost::asio::ssl::context& ssl_ctx) {
+                        ntonix::server::handle_ssl_connection(std::move(socket), ssl_ctx,
+                                                               request_handler, ssl_streaming_handler);
+                    }
+                );
+
+                spdlog::info("SSL server started on port {} (HTTPS)", config.server.ssl_port);
+            } catch (const std::exception& e) {
+                spdlog::error("Failed to start SSL server: {}", e.what());
+                spdlog::warn("Continuing with HTTP-only mode");
+            }
+        }
+
         // Start health checker and connection pool after server starts (uses server's io_context)
         if (!config.backends.empty()) {
             health_checker->start();
@@ -409,10 +459,21 @@ int main(int argc, char* argv[]) {
         }
 
         spdlog::info("Server started successfully");
+        if (ssl_server && ssl_server->is_running()) {
+            spdlog::info("HTTP on port {}, HTTPS on port {}",
+                        config.server.port, config.server.ssl_port);
+        } else {
+            spdlog::info("HTTP on port {} (HTTPS disabled)", config.server.port);
+        }
         spdlog::info("Press Ctrl+C to stop");
 
         // Wait for shutdown (blocks until signal received)
         server.wait();
+
+        // Stop SSL server
+        if (ssl_server) {
+            ssl_server->stop();
+        }
 
         // Stop health checker and connection pool
         health_checker->stop();

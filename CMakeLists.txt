@@ -83,6 +83,9 @@ set(NTONIX_SOURCES
     src/main.cpp
     src/server/server.cpp
     src/server/connection.cpp
+    src/server/ssl_context.cpp
+    src/server/ssl_connection.cpp
+    src/server/ssl_server.cpp
     src/config/config.cpp
     src/balancer/health_checker.cpp
     src/balancer/load_balancer.cpp

@@ -220,15 +220,15 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As a secure gateway, I need to handle SSL/TLS so that client connections are encrypted.
 
 **Acceptance Criteria:**
-- [ ] Load SSL certificate and private key from files
-- [ ] Accept HTTPS connections on configured SSL port
-- [ ] TLS 1.2/1.3 support via OpenSSL
-- [ ] Forward decrypted requests to backends over plain HTTP
-- [ ] Graceful handling of SSL handshake failures
-- [ ] Support for SNI (Server Name Indication)
+- [x] Load SSL certificate and private key from files
+- [x] Accept HTTPS connections on configured SSL port
+- [x] TLS 1.2/1.3 support via OpenSSL
+- [x] Forward decrypted requests to backends over plain HTTP
+- [x] Graceful handling of SSL handshake failures
+- [x] Support for SNI (Server Name Indication)
 
 - **Priority:** 2
-- **Status:** false
+- **Status:** true
 - **Notes:** Production requirement. Use boost::asio::ssl.
 
 ---
