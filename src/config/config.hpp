@@ -66,6 +66,18 @@ struct SslSettings {
 };
 
 /**
+ * Logging configuration
+ */
+struct LogSettings {
+    std::string level{"info"};         // trace, debug, info, warn, error, critical, off
+    std::string file;                  // Log file path (empty for stdout only)
+    std::size_t max_file_size_mb{100}; // Max size before rotation
+    std::size_t max_files{5};          // Number of rotated files to keep
+    bool enable_console{true};         // Log to stdout
+    bool enable_colors{true};          // Colored console output
+};
+
+/**
  * Complete application configuration
  */
 struct Config {
@@ -73,6 +85,7 @@ struct Config {
     std::vector<BackendConfig> backends;
     CacheSettings cache;
     SslSettings ssl;
+    LogSettings logging;
 
     /**
      * Validate configuration and throw if invalid
@@ -175,6 +188,8 @@ void to_json(nlohmann::json& j, const CacheSettings& c);
 void from_json(const nlohmann::json& j, CacheSettings& c);
 void to_json(nlohmann::json& j, const SslSettings& s);
 void from_json(const nlohmann::json& j, SslSettings& s);
+void to_json(nlohmann::json& j, const LogSettings& l);
+void from_json(const nlohmann::json& j, LogSettings& l);
 void to_json(nlohmann::json& j, const Config& c);
 void from_json(const nlohmann::json& j, Config& c);
 

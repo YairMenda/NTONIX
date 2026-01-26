@@ -237,15 +237,15 @@ NTONIX is a C++20 reverse proxy designed to optimize local LLM cluster infrastru
 **Description:** As an operator, I need structured logging so that I can monitor and debug the proxy.
 
 **Acceptance Criteria:**
-- [ ] Structured logging with levels (DEBUG, INFO, WARN, ERROR)
-- [ ] Log format: timestamp, level, component, message, context
-- [ ] Access log: method, path, status, latency, cache hit/miss
-- [ ] Configurable log level via config/environment
-- [ ] Log rotation support (or stdout for container deployment)
-- [ ] Request tracing with X-Request-ID propagation
+- [x] Structured logging with levels (DEBUG, INFO, WARN, ERROR)
+- [x] Log format: timestamp, level, component, message, context
+- [x] Access log: method, path, status, latency, cache hit/miss
+- [x] Configurable log level via config/environment
+- [x] Log rotation support (or stdout for container deployment)
+- [x] Request tracing with X-Request-ID propagation
 
 - **Priority:** 3
-- **Status:** false
+- **Status:** true
 - **Notes:** Use spdlog or similar. Essential for debugging.
 
 ---

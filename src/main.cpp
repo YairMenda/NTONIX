@@ -15,6 +15,7 @@
 #include "proxy/forwarder.hpp"
 #include "cache/lru_cache.hpp"
 #include "cache/cache_key.hpp"
+#include "util/logger.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/ssl.hpp>
@@ -27,11 +28,31 @@
 
 namespace asio = boost::asio;
 
-int main(int argc, char* argv[]) {
-    // Set log level (DEBUG for development)
-    spdlog::set_level(spdlog::level::debug);
+// Helper to convert config log settings to logger config
+ntonix::util::LogConfig make_log_config(const ntonix::config::LogSettings& settings) {
+    ntonix::util::LogConfig log_config;
+    log_config.file_path = settings.file;
+    log_config.max_file_size_mb = settings.max_file_size_mb;
+    log_config.max_files = settings.max_files;
+    log_config.enable_console = settings.enable_console;
+    log_config.enable_colors = settings.enable_colors;
 
-    spdlog::info("NTONIX AI Inference Gateway v0.1.0");
+    // Parse log level
+    if (auto level = ntonix::util::Logger::parse_level(settings.level)) {
+        log_config.level = *level;
+    } else {
+        log_config.level = ntonix::util::LogLevel::Info;  // Default to info
+    }
+
+    return log_config;
+}
+
+int main(int argc, char* argv[]) {
+    // Initialize with default logging until config is loaded
+    ntonix::util::Logger::init_default();
+    auto& logger = ntonix::util::Logger::instance();
+
+    NTONIX_LOG_INFO("server", "NTONIX AI Inference Gateway v0.1.0");
 
     try {
         // Load configuration
@@ -43,6 +64,11 @@ int main(int argc, char* argv[]) {
 
         auto config = config_manager.get_config();
 
+        // Reconfigure logger with loaded settings
+        auto log_config = make_log_config(config.logging);
+        logger.set_level(log_config.level);
+        NTONIX_LOG_INFO("config", "Log level set to: {}", ntonix::util::Logger::level_to_string(log_config.level));
+
         // Configure server from loaded config
         ntonix::server::ServerConfig server_config;
         server_config.port = config.server.port;
@@ -51,33 +77,33 @@ int main(int argc, char* argv[]) {
             : std::max(1u, std::thread::hardware_concurrency());
         server_config.bind_address = config.server.bind_address;
 
-        spdlog::info("Configuration: port={}, threads={}, bind={}",
+        NTONIX_LOG_INFO("config", "Configuration: port={}, threads={}, bind={}",
                     server_config.port, server_config.thread_count, server_config.bind_address);
 
         // Log backend configuration
         if (config.backends.empty()) {
-            spdlog::warn("No backends configured - proxy will return 503 for all forwarding requests");
+            NTONIX_LOG_WARN("config", "No backends configured - proxy will return 503 for all forwarding requests");
         } else {
-            spdlog::info("Backends configured:");
+            NTONIX_LOG_INFO("config", "Backends configured:");
             for (const auto& backend : config.backends) {
-                spdlog::info("  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
+                NTONIX_LOG_INFO("config", "  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
             }
         }
 
         // Log cache configuration
         if (config.cache.enabled) {
-            spdlog::info("Cache: enabled, max_size={}MB, ttl={}s",
+            NTONIX_LOG_INFO("config", "Cache: enabled, max_size={}MB, ttl={}s",
                         config.cache.max_size_mb, config.cache.ttl_seconds);
         } else {
-            spdlog::info("Cache: disabled");
+            NTONIX_LOG_INFO("config", "Cache: disabled");
         }
 
         // Log SSL configuration
         if (config.ssl.enabled) {
-            spdlog::info("SSL: enabled, port={}, cert={}, key={}",
+            NTONIX_LOG_INFO("config", "SSL: enabled, port={}, cert={}, key={}",
                         config.server.ssl_port, config.ssl.cert_file, config.ssl.key_file);
         } else {
-            spdlog::info("SSL: disabled");
+            NTONIX_LOG_INFO("config", "SSL: disabled");
         }
 
         // Create and start server
@@ -101,7 +127,7 @@ int main(int argc, char* argv[]) {
             const ntonix::config::BackendConfig& backend,
             ntonix::balancer::BackendState old_state,
             ntonix::balancer::BackendState new_state) {
-            spdlog::info("Backend {}:{} health state: {} -> {}",
+            NTONIX_LOG_INFO("health", "Backend {}:{} health state: {} -> {}",
                          backend.host, backend.port,
                          ntonix::balancer::to_string(old_state),
                          ntonix::balancer::to_string(new_state));
@@ -110,7 +136,7 @@ int main(int argc, char* argv[]) {
         // Create load balancer with health checker integration
         auto load_balancer = std::make_shared<ntonix::balancer::LoadBalancer>(health_checker);
         load_balancer->set_backends(config.backends);
-        spdlog::info("Load balancer configured with {} backends", config.backends.size());
+        NTONIX_LOG_INFO("balancer", "Load balancer configured with {} backends", config.backends.size());
 
         // Create connection pool manager for backend connections
         ntonix::proxy::ConnectionPoolConfig pool_config;
@@ -122,7 +148,7 @@ int main(int argc, char* argv[]) {
         auto connection_pool = std::make_shared<ntonix::proxy::ConnectionPoolManager>(
             server.get_io_context(), pool_config);
         connection_pool->set_backends(config.backends);
-        spdlog::info("Connection pool manager configured (pool_size={} per backend)",
+        NTONIX_LOG_INFO("pool", "Connection pool manager configured (pool_size={} per backend)",
                     pool_config.pool_size_per_backend);
 
         // Create request forwarder for proxying to backends
@@ -134,7 +160,7 @@ int main(int argc, char* argv[]) {
 
         auto forwarder = std::make_shared<ntonix::proxy::Forwarder>(
             server.get_io_context(), connection_pool, forwarder_config);
-        spdlog::info("Request forwarder configured (timeout={}s)",
+        NTONIX_LOG_INFO("proxy", "Request forwarder configured (timeout={}s)",
                     forwarder_config.request_timeout.count());
 
         // Create LRU cache for response caching
@@ -145,17 +171,17 @@ int main(int argc, char* argv[]) {
 
         auto response_cache = std::make_shared<ntonix::cache::LruCache>(cache_config);
         if (config.cache.enabled) {
-            spdlog::info("Response cache configured: max_size={}MB, ttl={}s",
+            NTONIX_LOG_INFO("cache", "Response cache configured: max_size={}MB, ttl={}s",
                         config.cache.max_size_mb, config.cache.ttl_seconds);
         } else {
-            spdlog::info("Response cache: disabled");
+            NTONIX_LOG_INFO("cache", "Response cache: disabled");
         }
 
         // Register SIGHUP handler for config reload (Unix only, handled in server via signal_set)
         config_manager.on_reload([health_checker, load_balancer, connection_pool](const std::vector<ntonix::config::BackendConfig>& backends) {
-            spdlog::info("Backend configuration reloaded with {} backends", backends.size());
+            NTONIX_LOG_INFO("config", "Backend configuration reloaded with {} backends", backends.size());
             for (const auto& backend : backends) {
-                spdlog::info("  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
+                NTONIX_LOG_INFO("config", "  - {}:{} (weight={})", backend.host, backend.port, backend.weight);
             }
             // Update health checker, load balancer, and connection pool with new backend list
             health_checker->set_backends(backends);
@@ -181,7 +207,7 @@ int main(int argc, char* argv[]) {
                 return false;  // Not a streaming request, use normal handler
             }
 
-            spdlog::info("Streaming request: {} {} Client={}",
+            NTONIX_LOG_INFO("proxy", "Streaming request: {} {} Client={}",
                         std::string(http::to_string(req.method)),
                         req.target,
                         req.client_ip.empty() ? "(unknown)" : req.client_ip);
@@ -202,7 +228,7 @@ int main(int argc, char* argv[]) {
             // Select backend using load balancer
             auto backend_selection = load_balancer->select_backend();
             if (!backend_selection) {
-                spdlog::warn("No healthy backends available for streaming request");
+                NTONIX_LOG_WARN("balancer", "No healthy backends available for streaming request");
                 http::response<http::string_body> error_response{http::status::service_unavailable, 11};
                 error_response.set(http::field::server, "NTONIX/0.1.0");
                 error_response.set(http::field::content_type, "application/json");
@@ -214,14 +240,28 @@ int main(int argc, char* argv[]) {
             }
 
             const auto& backend = backend_selection->backend;
-            spdlog::info("Load balancer selected backend {}:{} for streaming (index={})",
+            NTONIX_LOG_DEBUG("balancer", "Load balancer selected backend {}:{} for streaming (index={})",
                         backend.host, backend.port, backend_selection->index);
 
             // Forward with streaming support
             auto result = forwarder->forward_with_streaming(req, backend, client_stream, req.client_ip);
 
             if (result.is_streaming) {
-                spdlog::info("Streaming complete: {} bytes forwarded from {}:{} in {}ms",
+                // Log access for streaming request
+                ntonix::util::AccessLogEntry access_entry;
+                access_entry.request_id = req.x_request_id;
+                access_entry.client_ip = req.client_ip;
+                access_entry.method = std::string(http::to_string(req.method));
+                access_entry.path = req.target;
+                access_entry.status_code = 200;  // Streaming always starts with 200
+                access_entry.response_size = result.stream_result.bytes_forwarded;
+                access_entry.latency = result.latency;
+                access_entry.cache_hit = false;
+                access_entry.backend_host = result.backend_host;
+                access_entry.backend_port = result.backend_port;
+                ntonix::util::Logger::instance().access(access_entry);
+
+                NTONIX_LOG_DEBUG("proxy", "Streaming complete: {} bytes forwarded from {}:{} in {}ms",
                             result.stream_result.bytes_forwarded,
                             result.backend_host, result.backend_port,
                             result.latency.count());
@@ -240,7 +280,7 @@ int main(int argc, char* argv[]) {
             }
 
             if (!result.success) {
-                spdlog::warn("Streaming forward failed: {}", result.error_message);
+                NTONIX_LOG_WARN("proxy", "Streaming forward failed: {}", result.error_message);
             }
 
             return true;  // We handled the request
@@ -257,12 +297,20 @@ int main(int argc, char* argv[]) {
             using namespace ntonix::server;
             namespace http = boost::beast::http;
 
-            spdlog::info("Request: {} {} Host={} Content-Type={} Client={}",
+            // Start timing for access log
+            auto start_time = std::chrono::steady_clock::now();
+
+            // Create request context for X-Request-ID propagation
+            ntonix::util::RequestContext request_ctx(req.x_request_id);
+            std::string request_id = request_ctx.id();
+
+            NTONIX_LOG_DEBUG("server", "Request: {} {} Host={} Content-Type={} Client={} RequestID={}",
                         std::string(http::to_string(req.method)),
                         req.target,
                         req.host.empty() ? "(none)" : req.host,
                         req.content_type.empty() ? "(none)" : req.content_type,
-                        req.client_ip.empty() ? "(unknown)" : req.client_ip);
+                        req.client_ip.empty() ? "(unknown)" : req.client_ip,
+                        request_id);
 
             // Handle health check endpoint
             if (req.target == "/health" && req.method == http::verb::get) {
@@ -308,7 +356,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 // Log the request body (for development)
-                spdlog::debug("Request body: {}", req.body);
+                NTONIX_LOG_TRACE("proxy", "Request body: {}", req.body);
 
                 // Check for cache bypass via Cache-Control header
                 std::string cache_control;
@@ -329,42 +377,79 @@ int main(int argc, char* argv[]) {
                 if (!bypass_cache && response_cache->is_enabled()) {
                     auto cached = response_cache->get(cache_key);
                     if (cached) {
-                        spdlog::info("Cache HIT: key={}", cache_key.to_string());
+                        NTONIX_LOG_DEBUG("cache", "Cache HIT: key={}", cache_key.to_string());
+
+                        // Calculate latency and log access
+                        auto end_time = std::chrono::steady_clock::now();
+                        auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+
+                        ntonix::util::AccessLogEntry access_entry;
+                        access_entry.request_id = request_id;
+                        access_entry.client_ip = req.client_ip;
+                        access_entry.method = std::string(http::to_string(req.method));
+                        access_entry.path = req.target;
+                        access_entry.status_code = 200;
+                        access_entry.request_size = req.body.size();
+                        access_entry.response_size = cached->body.size();
+                        access_entry.latency = latency;
+                        access_entry.cache_hit = true;
+                        ntonix::util::Logger::instance().access(access_entry);
+
                         return HttpResponse{
                             .status = http::status::ok,
                             .content_type = cached->content_type,
                             .body = cached->body,
-                            .headers = {{"X-Cache", "HIT"}}
+                            .headers = {{"X-Cache", "HIT"}, {"X-Request-ID", request_id}}
                         };
                     }
-                    spdlog::debug("Cache MISS: key={}", cache_key.to_string());
+                    NTONIX_LOG_DEBUG("cache", "Cache MISS: key={}", cache_key.to_string());
                 }
 
                 // Select backend using load balancer
                 auto backend_selection = load_balancer->select_backend();
                 if (!backend_selection) {
-                    spdlog::warn("No healthy backends available - returning 503");
+                    NTONIX_LOG_WARN("balancer", "No healthy backends available - returning 503");
                     return HttpResponse{
                         .status = http::status::service_unavailable,
                         .content_type = "application/json",
-                        .body = R"({"error": "No healthy backends available"})"
+                        .body = R"({"error": "No healthy backends available"})",
+                        .headers = {{"X-Request-ID", request_id}}
                     };
                 }
 
                 const auto& backend = backend_selection->backend;
-                spdlog::info("Load balancer selected backend {}:{} (index={})",
+                NTONIX_LOG_DEBUG("balancer", "Load balancer selected backend {}:{} (index={})",
                             backend.host, backend.port, backend_selection->index);
 
                 // Forward the request to the selected backend (non-streaming)
                 auto result = forwarder->forward(req, backend, req.client_ip);
 
-                spdlog::info("Backend response: {} from {}:{} in {}ms",
+                // Calculate total latency for access log
+                auto end_time = std::chrono::steady_clock::now();
+                auto total_latency = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+
+                // Log access entry
+                ntonix::util::AccessLogEntry access_entry;
+                access_entry.request_id = request_id;
+                access_entry.client_ip = req.client_ip;
+                access_entry.method = std::string(http::to_string(req.method));
+                access_entry.path = req.target;
+                access_entry.status_code = static_cast<int>(result.response.status);
+                access_entry.request_size = req.body.size();
+                access_entry.response_size = result.response.body.size();
+                access_entry.latency = total_latency;
+                access_entry.cache_hit = false;
+                access_entry.backend_host = result.backend_host;
+                access_entry.backend_port = result.backend_port;
+                ntonix::util::Logger::instance().access(access_entry);
+
+                NTONIX_LOG_DEBUG("proxy", "Backend response: {} from {}:{} in {}ms",
                             static_cast<int>(result.response.status),
                             result.backend_host, result.backend_port,
                             result.latency.count());
 
                 if (!result.success) {
-                    spdlog::warn("Forward failed: {}", result.error_message);
+                    NTONIX_LOG_WARN("proxy", "Forward failed: {}", result.error_message);
                 }
 
                 // Cache successful responses (2xx status codes only)
@@ -372,11 +457,12 @@ int main(int argc, char* argv[]) {
                     static_cast<int>(result.response.status) >= 200 &&
                     static_cast<int>(result.response.status) < 300) {
                     response_cache->put(cache_key, result.response.body, result.response.content_type);
-                    spdlog::debug("Cached response: key={}, size={}", cache_key.to_string(), result.response.body.size());
+                    NTONIX_LOG_DEBUG("cache", "Cached response: key={}, size={}", cache_key.to_string(), result.response.body.size());
                 }
 
-                // Add cache header to response
+                // Add cache and request ID headers to response
                 result.response.headers.push_back({"X-Cache", "MISS"});
+                result.response.headers.push_back({"X-Request-ID", request_id});
                 return result.response;
             }
 
@@ -443,29 +529,29 @@ int main(int argc, char* argv[]) {
                     }
                 );
 
-                spdlog::info("SSL server started on port {} (HTTPS)", config.server.ssl_port);
+                NTONIX_LOG_INFO("ssl", "SSL server started on port {} (HTTPS)", config.server.ssl_port);
             } catch (const std::exception& e) {
-                spdlog::error("Failed to start SSL server: {}", e.what());
-                spdlog::warn("Continuing with HTTP-only mode");
+                NTONIX_LOG_ERROR("ssl", "Failed to start SSL server: {}", e.what());
+                NTONIX_LOG_WARN("ssl", "Continuing with HTTP-only mode");
             }
         }
 
         // Start health checker and connection pool after server starts (uses server's io_context)
         if (!config.backends.empty()) {
             health_checker->start();
-            spdlog::info("Health checker started for {} backends", config.backends.size());
+            NTONIX_LOG_INFO("health", "Health checker started for {} backends", config.backends.size());
             connection_pool->start_cleanup();
-            spdlog::info("Connection pool cleanup timer started");
+            NTONIX_LOG_INFO("pool", "Connection pool cleanup timer started");
         }
 
-        spdlog::info("Server started successfully");
+        NTONIX_LOG_INFO("server", "Server started successfully");
         if (ssl_server && ssl_server->is_running()) {
-            spdlog::info("HTTP on port {}, HTTPS on port {}",
+            NTONIX_LOG_INFO("server", "HTTP on port {}, HTTPS on port {}",
                         config.server.port, config.server.ssl_port);
         } else {
-            spdlog::info("HTTP on port {} (HTTPS disabled)", config.server.port);
+            NTONIX_LOG_INFO("server", "HTTP on port {} (HTTPS disabled)", config.server.port);
         }
-        spdlog::info("Press Ctrl+C to stop");
+        NTONIX_LOG_INFO("server", "Press Ctrl+C to stop");
 
         // Wait for shutdown (blocks until signal received)
         server.wait();
@@ -479,11 +565,15 @@ int main(int argc, char* argv[]) {
         health_checker->stop();
         connection_pool->stop_cleanup();
 
-        spdlog::info("Server stopped gracefully");
+        NTONIX_LOG_INFO("server", "Server stopped gracefully");
+
+        // Shutdown logger
+        ntonix::util::Logger::instance().shutdown();
         return 0;
 
     } catch (const std::exception& e) {
-        spdlog::error("Fatal error: {}", e.what());
+        NTONIX_LOG_ERROR("server", "Fatal error: {}", e.what());
+        ntonix::util::Logger::instance().shutdown();
         return 1;
     }
 }

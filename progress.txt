@@ -29,3 +29,55 @@ SSL/TLS termination was already fully implemented in the codebase:
 - The ssl_context uses tlsv12 as base but configures actual versions via SSL_CTX_set_min/max_proto_version
 
 ---
+
+## Iteration 2 - US-012: Logging and Observability
+
+### What was implemented
+Complete logging and observability system using spdlog:
+
+1. **Logger Class** (`src/util/logger.hpp/cpp`):
+   - Thread-safe singleton logger with component tagging
+   - Configurable log levels: Trace, Debug, Info, Warn, Error, Critical, Off
+   - Log format: `[timestamp] [level] [component] message`
+   - Support for file rotation and console output with colors
+   - Dedicated access logger for HTTP request/response logging
+
+2. **Access Logging**:
+   - AccessLogEntry struct captures: request_id, client_ip, method, path, status, latency, cache_hit, backend info
+   - Format: `request_id client_ip "METHOD /path" status response_size latency cache_status backend`
+
+3. **Configuration** (`src/config/config.hpp/cpp`):
+   - Added LogSettings struct with: level, file, max_file_size_mb, max_files, enable_console, enable_colors
+   - JSON serialization for logging config
+   - Environment variables: NTONIX_LOG_LEVEL, NTONIX_LOG_FILE
+   - Updated help text with logging options
+
+4. **Request Tracing** (`RequestContext` class):
+   - Thread-local storage for X-Request-ID propagation
+   - Automatic ID generation (16-char hex) if not provided
+   - RAII-style scope management
+   - X-Request-ID header added to responses
+
+5. **Integration** (`src/main.cpp`):
+   - Replaced direct spdlog calls with NTONIX_LOG_* macros
+   - Component-based logging (server, config, balancer, health, cache, proxy, ssl, pool)
+   - Access log entries for all HTTP requests (cache hits, backend responses, streaming)
+   - Logger initialization from config and graceful shutdown
+
+### Files created/modified
+- `src/util/logger.hpp` - NEW: Logger class header
+- `src/util/logger.cpp` - NEW: Logger implementation
+- `src/config/config.hpp` - Added LogSettings struct and JSON declarations
+- `src/config/config.cpp` - Added JSON serialization, env vars, help text for logging
+- `src/main.cpp` - Integrated logger, replaced spdlog calls, added access logging
+- `CMakeLists.txt` - Added src/util/logger.cpp to sources
+
+### Learnings for future iterations
+- spdlog is already configured as a dependency in CMakeLists.txt (FetchContent if not found)
+- Use NTONIX_LOG_* macros for consistent component-tagged logging
+- AccessLogEntry should be used for all HTTP request completions
+- RequestContext provides thread-local X-Request-ID for request tracing
+- Log level can be changed at runtime via Logger::set_level()
+- Build verification requires cmake and compiler - not available in this environment (per Iteration 1)
+
+---

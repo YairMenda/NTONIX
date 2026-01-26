@@ -77,12 +77,33 @@ void from_json(const nlohmann::json& j, SslSettings& s) {
     if (j.contains("enabled")) j.at("enabled").get_to(s.enabled);
 }
 
+void to_json(nlohmann::json& j, const LogSettings& l) {
+    j = nlohmann::json{
+        {"level", l.level},
+        {"file", l.file},
+        {"max_file_size_mb", l.max_file_size_mb},
+        {"max_files", l.max_files},
+        {"enable_console", l.enable_console},
+        {"enable_colors", l.enable_colors}
+    };
+}
+
+void from_json(const nlohmann::json& j, LogSettings& l) {
+    if (j.contains("level")) j.at("level").get_to(l.level);
+    if (j.contains("file")) j.at("file").get_to(l.file);
+    if (j.contains("max_file_size_mb")) j.at("max_file_size_mb").get_to(l.max_file_size_mb);
+    if (j.contains("max_files")) j.at("max_files").get_to(l.max_files);
+    if (j.contains("enable_console")) j.at("enable_console").get_to(l.enable_console);
+    if (j.contains("enable_colors")) j.at("enable_colors").get_to(l.enable_colors);
+}
+
 void to_json(nlohmann::json& j, const Config& c) {
     j = nlohmann::json{
         {"server", c.server},
         {"backends", c.backends},
         {"cache", c.cache},
-        {"ssl", c.ssl}
+        {"ssl", c.ssl},
+        {"logging", c.logging}
     };
 }
 
@@ -91,6 +112,7 @@ void from_json(const nlohmann::json& j, Config& c) {
     if (j.contains("backends")) j.at("backends").get_to(c.backends);
     if (j.contains("cache")) j.at("cache").get_to(c.cache);
     if (j.contains("ssl")) j.at("ssl").get_to(c.ssl);
+    if (j.contains("logging")) j.at("logging").get_to(c.logging);
 }
 
 // Config validation
@@ -272,6 +294,8 @@ void ConfigManager::print_help(const char* program_name) {
               << "  NTONIX_CACHE_ENABLED    Enable/disable cache (true/false)\n"
               << "  NTONIX_CACHE_SIZE_MB    Cache size in MB\n"
               << "  NTONIX_CACHE_TTL        Cache TTL in seconds\n"
+              << "  NTONIX_LOG_LEVEL        Log level (trace/debug/info/warn/error/critical/off)\n"
+              << "  NTONIX_LOG_FILE         Log file path (stdout if not set)\n"
               << "\n"
               << "Configuration Precedence (highest to lowest):\n"
               << "  1. Command-line arguments\n"
@@ -298,6 +322,14 @@ void ConfigManager::print_help(const char* program_name) {
               << "      \"enabled\": false,\n"
               << "      \"cert_file\": \"server.crt\",\n"
               << "      \"key_file\": \"server.key\"\n"
+              << "    },\n"
+              << "    \"logging\": {\n"
+              << "      \"level\": \"info\",\n"
+              << "      \"file\": \"\",\n"
+              << "      \"max_file_size_mb\": 100,\n"
+              << "      \"max_files\": 5,\n"
+              << "      \"enable_console\": true,\n"
+              << "      \"enable_colors\": true\n"
               << "    }\n"
               << "  }\n"
               << "\n"
@@ -421,6 +453,17 @@ void ConfigManager::apply_environment_overrides() {
         } catch (...) {
             throw std::runtime_error("Invalid NTONIX_CACHE_TTL value: " + *env);
         }
+    }
+
+    // Logging settings
+    if (auto env = get_env("NTONIX_LOG_LEVEL")) {
+        config_.logging.level = *env;
+        spdlog::debug("Applied NTONIX_LOG_LEVEL={}", config_.logging.level);
+    }
+
+    if (auto env = get_env("NTONIX_LOG_FILE")) {
+        config_.logging.file = *env;
+        spdlog::debug("Applied NTONIX_LOG_FILE={}", config_.logging.file);
     }
 }
 

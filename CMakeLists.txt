@@ -94,6 +94,7 @@ set(NTONIX_SOURCES
     src/proxy/stream_pipe.cpp
     src/cache/cache_key.cpp
     src/cache/lru_cache.cpp
+    src/util/logger.cpp
 )
 
 # Main executable
