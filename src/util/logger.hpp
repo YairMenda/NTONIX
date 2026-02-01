@@ -74,6 +74,9 @@ struct AccessLogEntry {
  * Logger class - centralized logging with component tagging
  *
  * Thread-safe singleton that manages application-wide logging.
+ *
+ * Note: Destructor is public to allow std::unique_ptr to clean up the singleton.
+ * The singleton pattern is maintained by keeping the constructor private.
  */
 class Logger {
 public:
@@ -92,6 +95,12 @@ public:
      * Get the logger instance (creates default if not initialized)
      */
     static Logger& instance();
+
+    /**
+     * Destructor - public to allow unique_ptr cleanup, but singleton pattern
+     * is maintained by keeping constructor private.
+     */
+    ~Logger();
 
     /**
      * Set the global log level
@@ -157,7 +166,6 @@ public:
 
 private:
     Logger() = default;
-    ~Logger();
 
     // Non-copyable
     Logger(const Logger&) = delete;

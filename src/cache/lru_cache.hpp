@@ -28,6 +28,10 @@ namespace ntonix::cache {
 
 /**
  * Cached response entry with metadata
+ *
+ * Note: hit_count uses std::uint64_t (not std::atomic) because CacheEntry
+ * must be copyable/movable for use in std::list. Thread safety is provided
+ * by the LruCache's shared_mutex - all access to entries is protected.
  */
 struct CacheEntry {
     std::string body;              // Response body
@@ -37,7 +41,7 @@ struct CacheEntry {
     std::chrono::steady_clock::time_point created_at;  // When entry was cached
     std::chrono::steady_clock::time_point last_access; // Last access time
 
-    std::atomic<std::uint64_t> hit_count{0};  // Number of cache hits
+    std::uint64_t hit_count{0};    // Number of cache hits (protected by LruCache mutex)
 };
 
 /**

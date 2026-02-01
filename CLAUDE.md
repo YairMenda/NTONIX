@@ -58,3 +58,27 @@ Use Docker to spin up mock LLM backends, then send test requests through the pro
 - **Thread Safety**: Cache operations use shared_mutex for reader-writer locking patterns
 - **Error Handling**: Implement circuit breakers to detect and isolate failing backend nodes
 - **Performance**: Minimize allocations in hot paths, use const_buffer for zero-copy forwarding
+
+## C++ Design Patterns and Best Practices
+
+### LRU Cache (`src/cache/lru_cache.hpp`)
+
+**Thread Safety Model**: The `CacheEntry` struct uses regular `std::uint64_t` for `hit_count` instead of `std::atomic<std::uint64_t>`. This is intentional because:
+- `CacheEntry` must be copyable/movable for use in `std::list<Node>`
+- `std::atomic` types are non-copyable and non-movable (deleted copy/move constructors)
+- Thread safety is already provided by the `LruCache`'s `std::shared_mutex` - all entry access is protected
+- The atomic counters at the `LruCache` level (`hits_`, `misses_`, etc.) are for lock-free statistics reads
+
+### Logger Singleton (`src/util/logger.hpp`)
+
+**Singleton with `unique_ptr`**: The `Logger` class uses a public destructor with private constructor pattern:
+- Constructor is private to prevent external instantiation (singleton pattern)
+- Destructor is public to allow `std::unique_ptr<Logger>` to clean up the singleton
+- `std::unique_ptr` uses `std::default_delete` which requires public destructor access
+- This is the recommended pattern for singletons managed by smart pointers
+
+### General Guidelines
+
+- **Avoid `std::atomic` in copyable/movable structs**: If a struct needs to be stored in STL containers or returned by value, don't use `std::atomic` members. Use external synchronization instead.
+- **Smart pointer singletons**: When using `std::unique_ptr` for singleton storage, ensure the destructor is accessible (public or via friend deleter).
+- **Prefer `std::shared_mutex`**: For read-heavy workloads (like cache lookups), use `std::shared_mutex` with `std::shared_lock` for reads and `std::unique_lock` for writes.

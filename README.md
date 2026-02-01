@@ -622,9 +622,18 @@ cmake --build . --config Release
 - Check file permissions (readable by proxy process)
 - Ensure certificate is valid and not expired
 
-## 📄 License
+### Build errors (C++ compilation)
 
-[Specify your license here]
+**"use of deleted function" with `std::atomic`**:
+- `std::atomic` types are non-copyable and non-movable
+- If you see errors about deleted copy/move constructors involving `std::atomic`, the containing struct is being copied/moved
+- Solution: Use regular types with external synchronization (mutex) instead of `std::atomic` for struct members that need to be copyable
+
+**"destructor is private" with `std::unique_ptr` singleton**:
+- `std::unique_ptr` needs to call the destructor via `std::default_delete`
+- If the destructor is private, `unique_ptr` cannot clean up the object
+- Solution: Make the destructor public (keep constructor private for singleton pattern)
+
 
 ## 🙏 Acknowledgments
 
@@ -632,6 +641,3 @@ cmake --build . --config Release
 - **OpenSSL** for robust TLS/SSL support
 - **spdlog** for fast structured logging
 
----
-
-**Built with ❤️ using C++20 and modern systems programming practices.**
